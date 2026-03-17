@@ -4,86 +4,110 @@ struct ContentView: View {
     @Environment(ModelManager.self) private var modelManager
     @State private var chatVM: ChatViewModel?
     @State private var showLoadError = false
+    @State private var showMonitor = false
 
     var body: some View {
-        Group {
-            if let chatVM {
-                ChatView(viewModel: chatVM)
-            } else {
-                ProgressView("Initializing…")
-            }
-        }
-        .navigationTitle(modelManager.currentModel?.displayName ?? "MLX Server")
-        .onAppear {
-            if chatVM == nil {
-                chatVM = ChatViewModel(modelManager: modelManager)
-                // Auto-start API server if configured
-                if Preferences.apiAutoStart {
-                    chatVM?.startAPIServer()
-                }
-            }
-        }
-        .onChange(of: modelManager.currentModel) {
-            chatVM?.resetSession()
-            // Persist last used model
-            if let id = modelManager.currentModel?.id {
-                Preferences.lastModelId = id
-            }
-        }
-        .onChange(of: modelManager.errorMessage) {
-            showLoadError = modelManager.errorMessage != nil
-        }
-        .alert("Model Error", isPresented: $showLoadError) {
-            Button("Retry") {
-                if let config = modelManager.currentModel ?? ModelConfig.availableModels.first {
-                    Task { await modelManager.loadModel(config) }
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                modelManager.errorMessage = nil
-            }
-        } message: {
-            Text(modelManager.errorMessage ?? "Unknown error loading model.")
-        }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ModelPickerView()
-            }
-
-            ToolbarItemGroup(placement: .primaryAction) {
-                // API server toggle
-                Button {
-                    if let chatVM {
-                        if chatVM.apiServer.isRunning {
-                            chatVM.stopAPIServer()
-                        } else {
-                            chatVM.startAPIServer()
-                        }
+        mainContent
+            .navigationTitle(modelManager.currentModel?.displayName ?? "MLX Server")
+            .onAppear {
+                if chatVM == nil {
+                    chatVM = ChatViewModel(modelManager: modelManager)
+                    // Auto-start API server if configured
+                    if Preferences.apiAutoStart {
+                        chatVM?.startAPIServer()
                     }
-                } label: {
-                    // Running → solid globe (green tint), click to stop
-                    // Stopped → slashed globe, click to start
-                    Label(
-                        chatVM?.apiServer.isRunning == true ? "Stop API" : "Start API",
-                        systemImage: chatVM?.apiServer.isRunning == true ? "network" : "network.slash"
-                    )
-                    .foregroundStyle(chatVM?.apiServer.isRunning == true ? .green : .secondary)
                 }
-                .help(chatVM?.apiServer.isRunning == true ? "API server running on port \(Preferences.apiPort) — click to stop" : "Click to start API server")
-
-                // New conversation
-                Button {
-                    chatVM?.newConversation()
-                } label: {
-                    Label("New Chat", systemImage: "plus.message")
-                }
-                .keyboardShortcut("n", modifiers: .command)
             }
+            .onChange(of: modelManager.currentModel) {
+                chatVM?.resetSession()
+                // Persist last used model
+                if let id = modelManager.currentModel?.id {
+                    Preferences.lastModelId = id
+                }
+            }
+            .onChange(of: modelManager.errorMessage) {
+                showLoadError = modelManager.errorMessage != nil
+            }
+            .alert("Model Error", isPresented: $showLoadError) {
+                Button("Retry") {
+                    if let config = modelManager.currentModel ?? ModelConfig.availableModels.first {
+                        Task { await modelManager.loadModel(config) }
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    modelManager.errorMessage = nil
+                }
+            } message: {
+                Text(modelManager.errorMessage ?? "Unknown error loading model.")
+            }
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    ModelPickerView()
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    toolbarButtons
+                }
+            }
+            // Cmd+1/2/3 model switching
+            .background {
+                modelSwitchShortcuts
+            }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if let chatVM {
+            if showMonitor {
+                MonitorView(stats: chatVM.apiServer.inferenceStats)
+            } else {
+                ChatView(viewModel: chatVM)
+            }
+        } else {
+            ProgressView("Initializing…")
         }
-        // Cmd+1/2/3 model switching
-        .background {
-            modelSwitchShortcuts
+    }
+
+    @ViewBuilder
+    private var toolbarButtons: some View {
+        // API server toggle
+        let isRunning = chatVM?.apiServer.isRunning == true
+        Button {
+            if let chatVM {
+                if chatVM.apiServer.isRunning {
+                    chatVM.stopAPIServer()
+                } else {
+                    chatVM.startAPIServer()
+                }
+            }
+        } label: {
+            Label(
+                isRunning ? "Stop API" : "Start API",
+                systemImage: isRunning ? "network" : "network.slash"
+            )
+            .foregroundStyle(isRunning ? .green : .secondary)
         }
+        .help(isRunning ? "API server running on port \(Preferences.apiPort) — click to stop" : "Click to start API server")
+
+        // Monitor toggle
+        Button {
+            showMonitor.toggle()
+        } label: {
+            Label(
+                showMonitor ? "Chat" : "Monitor",
+                systemImage: showMonitor ? "bubble.left.and.text.bubble.right" : "chart.xyaxis.line"
+            )
+            .foregroundStyle(showMonitor ? Color.accentColor : Color.secondary)
+        }
+        .help(showMonitor ? "Switch to chat" : "Show inference monitor")
+        .keyboardShortcut("m", modifiers: [.command, .shift])
+
+        // New conversation
+        Button {
+            chatVM?.newConversation()
+        } label: {
+            Label("New Chat", systemImage: "plus.message")
+        }
+        .keyboardShortcut("n", modifiers: .command)
     }
 
     @ViewBuilder

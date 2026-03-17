@@ -11,6 +11,7 @@ final class APIServer {
     var isRunning = false
     var port: Int = 1234
     var requestCount: Int = 0
+    let inferenceStats = InferenceStats()
 
     private var listener: NWListener?
     private var modelManager: ModelManager?
@@ -54,6 +55,7 @@ final class APIServer {
             }
 
             listener?.start(queue: .global(qos: .userInitiated))
+            inferenceStats.startSampling()
         } catch {
             print("[APIServer] Failed to start: \(error)")
         }
@@ -66,6 +68,7 @@ final class APIServer {
         cachedSession = nil
         cachedMessages = nil
         cachedModelId = nil
+        inferenceStats.stopSampling()
     }
 
     // MARK: - Connection handling
@@ -341,6 +344,8 @@ final class APIServer {
         // Extract images from the last message only (ChatSession.streamDetails takes images separately)
         let lastImages = lastMessage.images
 
+        inferenceStats.requestStarted(contextLength: contextLength)
+
         if isStream {
             await handleStreamingResponse(
                 connection: connection,
@@ -421,13 +426,21 @@ final class APIServer {
                 switch generation {
                 case .chunk(let text):
                     fullText += text
+                    completionTokens += 1
+                    inferenceStats.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
                 case .info(let info):
                     promptTokens = info.promptTokenCount
                     completionTokens = info.generationTokenCount
+                    inferenceStats.prefillCompleted(promptTokens: promptTokens)
+                    if info.tokensPerSecond > 0 {
+                        inferenceStats.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
+                    }
                 case .toolCall(let call):
                     frameworkToolCalls.append(call)
                 }
             }
+
+            inferenceStats.requestCompleted(promptTokens: promptTokens, generationTokens: completionTokens)
 
             // Parse tool calls: first check framework-detected ones, then our own text parser
             var finishReason = "stop"
@@ -499,6 +512,7 @@ final class APIServer {
                 sendResponse(connection: connection, status: 200, body: String(data: json, encoding: .utf8) ?? "{}")
             }
         } catch {
+            inferenceStats.requestCompleted(promptTokens: 0, generationTokens: 0)
             sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
         }
     }
@@ -564,6 +578,7 @@ final class APIServer {
                 case .chunk(let text):
                     completionTokens += 1
                     fullText += text
+                    inferenceStats.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
 
                     if !bufferForTools {
                         sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
@@ -579,12 +594,17 @@ final class APIServer {
                 case .info(let info):
                     promptTokens = info.promptTokenCount
                     completionTokens = info.generationTokenCount
+                    inferenceStats.prefillCompleted(promptTokens: promptTokens)
+                    if info.tokensPerSecond > 0 {
+                        inferenceStats.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
+                    }
 
                 case .toolCall(let call):
                     frameworkToolCalls.append(call)
                 }
             }
         } catch {
+            inferenceStats.requestCompleted(promptTokens: promptTokens, generationTokens: completionTokens)
             let errorEvent = "data: {\"error\":\"\(error.localizedDescription)\"}\n\n"
             connection.send(content: errorEvent.data(using: .utf8), completion: .contentProcessed({ _ in }))
         }
@@ -686,6 +706,8 @@ final class APIServer {
                 total_tokens: promptTokens + completionTokens
             )
         ))
+
+        inferenceStats.requestCompleted(promptTokens: promptTokens, generationTokens: completionTokens)
 
         // Send [DONE] and close
         let done = "data: [DONE]\n\n"

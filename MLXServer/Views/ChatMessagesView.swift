@@ -7,7 +7,7 @@ struct ChatMessagesView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
                     if viewModel.conversation.messages.isEmpty {
                         emptyState
                     } else {
@@ -16,14 +16,20 @@ struct ChatMessagesView: View {
                                 .id(message.id)
                         }
                     }
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottom")
                 }
                 .padding()
             }
             .onChange(of: viewModel.conversation.messages.last?.content) {
-                scrollToBottom(proxy: proxy)
+                // During streaming, scroll without animation to avoid overlapping animations
+                proxy.scrollTo("bottom", anchor: .bottom)
             }
             .onChange(of: viewModel.conversation.messages.count) {
-                scrollToBottom(proxy: proxy)
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
             }
         }
     }
@@ -47,13 +53,6 @@ struct ChatMessagesView: View {
         .frame(maxWidth: .infinity, minHeight: 300)
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let lastId = viewModel.conversation.messages.last?.id {
-            withAnimation(.easeOut(duration: 0.2)) {
-                proxy.scrollTo(lastId, anchor: .bottom)
-            }
-        }
-    }
 }
 
 struct MessageBubbleView: View {
