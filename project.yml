@@ -1,0 +1,45 @@
+name: MLXServer
+options:
+  bundleIdPrefix: com.mlxserver
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "16.4"
+  minimumXcodeGenVersion: "2.40"
+
+packages:
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    branch: main
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: "2.4.0"
+
+targets:
+  MLXServer:
+    type: application
+    platform: macOS
+    sources:
+      - MLXServer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mlxserver.app
+        PRODUCT_NAME: MLX Server
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        CODE_SIGN_ENTITLEMENTS: MLXServer/MLXServer.entitlements
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: "YES"
+    dependencies:
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXVLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: MarkdownUI
+        product: MarkdownUI

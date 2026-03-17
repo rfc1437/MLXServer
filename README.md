@@ -1,63 +1,57 @@
 # MLX Server
 
-OpenAI-compatible API server for running local LLMs on Apple Silicon via [MLX](https://github.com/ml-explore/mlx). Supports vision and tool use with automatic model swapping — only one model is loaded in memory at a time, switched on demand based on the request's `model` field.
+Native macOS app for running local LLMs on Apple Silicon via [MLX](https://github.com/ml-explore/mlx). Built with SwiftUI, it provides both a **chat UI** and an embedded **OpenAI-compatible API server**. Supports vision and tool use with automatic model swapping.
 
 ## Supported Models
 
 | Alias | Model | Context | Capabilities |
 |-------|-------|---------|-------------|
 | `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | Vision, tool use (`tool_code` blocks) |
-| `gemma3n` | `mlx-community/gemma-3n-E4B-it-4bit` | 32k | Vision/audio/video, tool use (`tool_code` blocks), ~1.5x faster |
 | `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | Vision, tool use (`<tool_call>` tags) |
 
 ## Quick Start
 
+Requires macOS 15+, Xcode 16.4+, and `xcodegen` (`brew install xcodegen`).
+
 ```bash
-source .venv/bin/activate
-
-# Start with Gemma 3 (default)
-./run.sh
-
-# Start with Qwen3
-./run.sh qwen
-
-# Or directly
-python -m mlx_server.main --model mlx-community/gemma-3-4b-it-4bit --port 1234
+./build.sh            # Debug build
+open "build/Debug/MLX Server.app"
 ```
 
-The server starts at `http://127.0.0.1:1234`.
+## App Features
 
-## API
+- **Chat interface** with markdown rendering, image attachments (file picker, drag & drop, clipboard paste)
+- **Model picker** in toolbar with local/download status indicators
+- **Streaming responses** with live token display
+- **Status bar** showing model name, context window, tokens/sec, token counts, GPU memory, API server status
+- **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3` (switch models)
+- **Settings** (`Cmd+,`): system prompt, API port, API auto-start
 
-Standard OpenAI-compatible endpoints:
+## API Server
 
-- `GET /v1/models` — lists all available models with `context_window` sizes
+The embedded API server (toggle in toolbar) runs on port 1234 by default. Standard OpenAI-compatible endpoints:
+
+- `GET /v1/models` — lists available models with `context_window` sizes
 - `POST /v1/chat/completions` — chat completions (streaming and non-streaming)
 - `GET /health` — health check
 
 ### Model Swapping
 
-Send any available model ID (or alias) in the `model` field. If it differs from the currently loaded model, the server unloads the old one and loads the new one automatically:
+Send any model ID or alias in the `model` field. If it differs from the currently loaded model, the server swaps automatically:
 
 ```bash
-# Uses Gemma
 curl http://localhost:1234/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "mlx-community/gemma-3-4b-it-4bit", "messages": [{"role": "user", "content": "Hello"}]}'
-
-# Swaps to Qwen
-curl http://localhost:1234/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "mlx-community/Qwen3-VL-4B-Instruct-4bit", "messages": [{"role": "user", "content": "Hello"}]}'
+  -d '{"model": "gemma", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
 ### Vision
 
-Pass images as base64 data URIs or URLs in the `image_url` content part:
+Pass images as base64 data URIs in the `image_url` content part:
 
 ```json
 {
-  "model": "mlx-community/gemma-3-4b-it-4bit",
+  "model": "gemma",
   "messages": [{
     "role": "user",
     "content": [
@@ -68,36 +62,49 @@ Pass images as base64 data URIs or URLs in the `image_url` content part:
 }
 ```
 
-### Context Window Management
-
-Each model's context window is read from its HuggingFace config (`max_position_embeddings`) and reported in `/v1/models` via the `context_window` field. Clients can use this to manage conversation length proactively.
-
-If a request exceeds the context window, the server:
-
-1. Automatically summarizes older messages (keeping system messages and the last 6 messages intact)
-2. Retries with the compressed conversation
-3. Returns an OpenAI-compatible `context_length_exceeded` error if it still doesn't fit
-
 ### Tool Use
 
-Pass tools in the `tools` field (OpenAI format). The server handles model-specific formatting and parses tool calls from the output automatically.
-
-## Installation
-
-Requires Python 3.11+ and Apple Silicon.
-
-```bash
-uv pip install -e "."
-```
+Pass tools in the `tools` field (OpenAI format). The server handles model-specific formatting (Gemma `tool_code` blocks, Qwen `<tool_call>` XML tags) and parses tool calls from output automatically. When tools are present during streaming, output is buffered to strip tool-call markup before sending to the client.
 
 ## Project Structure
 
 ```
-mlx_server/
-  main.py    — FastAPI server, endpoints, CLI entrypoint
-  engine.py  — Model loading, prompt building, generation (mlx_vlm)
-  models.py  — Pydantic models for OpenAI API types
+MLXServer/
+├── MLXServerApp.swift              — App entry point, GPU cache config
+├── ContentView.swift               — Main layout, toolbar, keyboard shortcuts
+├── Models/
+│   ├── ModelConfig.swift           — Model definitions, alias/repoId resolution
+│   └── ChatMessage.swift           — Chat message data model
+├── ViewModels/
+│   ├── ModelManager.swift          — Model loading/switching via VLMModelFactory
+│   └── ChatViewModel.swift         — Chat state, ChatSession, API server lifecycle
+├── Views/
+│   ├── ModelPickerView.swift       — Toolbar model selector
+│   ├── ChatMessagesView.swift      — Scrollable message list with markdown
+│   ├── ChatInputView.swift         — Text input + image attach
+│   ├── StatusBarView.swift         — Model info, tok/s, GPU memory, API status
+│   └── SettingsView.swift          — System prompt + API settings
+├── Server/
+│   ├── APIServer.swift             — NWListener HTTP server, SSE streaming, KV cache reuse
+│   ├── APIModels.swift             — OpenAI-compatible Codable structs
+│   ├── ToolCallParser.swift        — Parses tool calls from model output
+│   └── ToolPromptBuilder.swift     — Model-specific tool prompt formatting
+└── Utilities/
+    ├── LocalModelResolver.swift    — Offline-first HuggingFace cache resolution
+    └── Preferences.swift           — UserDefaults wrapper
+
+project.yml     — xcodegen project spec (dependencies, settings, deployment target)
+build.sh        — One-command build script (xcodegen + xcodebuild)
 ```
+
+## Key Design Decisions
+
+- Uses `mlx-swift-lm` (`MLXVLM` / `VLMModelFactory`) for inference — supports both text and vision in a single model load
+- **Offline-first**: `LocalModelResolver` checks `~/.cache/huggingface/hub/` for locally-cached snapshots before downloading
+- **KV cache reuse** across API requests — reuses `ChatSession` when conversation history prefix matches
+- HTTP server built on `Network.framework` (`NWListener`) — no third-party server dependencies
+- Model-specific prompt formatting: Gemma uses `tool_code` blocks, Qwen uses `<tool_call>` XML tags
+- GPU cache limit set to 20 MB; cache cleared on model unload
 
 ## Design Notes
 

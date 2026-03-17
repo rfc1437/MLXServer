@@ -1,11 +1,5 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
 build/
-.venv/
-.env
-*.log
 .DS_Store
+*.log
 settings.local.json
+xcuserdata/
