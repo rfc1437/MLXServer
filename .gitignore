@@ -8,3 +8,4 @@ build/
 .env
 *.log
 .DS_Store
+settings.local.json

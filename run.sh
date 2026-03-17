@@ -7,8 +7,28 @@ cd "$SCRIPT_DIR"
 # Activate virtual environment
 source .venv/bin/activate
 
-# Default model – 4-bit quantized Gemma 3 4B IT (vision-capable)
-MODEL="${MODEL:-mlx-community/gemma-3-4b-it-4bit}"
+# --- Model selection ---
+# Usage:  ./run.sh [gemma|qwen]
+# Or set MODEL env var directly for a custom model.
+
+MODEL_CHOICE="${1:-gemma}"
+
+if [[ -z "${MODEL:-}" ]]; then
+    case "$MODEL_CHOICE" in
+        gemma)
+            MODEL="mlx-community/gemma-3-4b-it-4bit"
+            ;;
+        qwen)
+            MODEL="mlx-community/Qwen3-VL-4B-Instruct-4bit"
+            ;;
+        *)
+            echo "Unknown model choice: $MODEL_CHOICE"
+            echo "Usage: $0 [gemma|qwen]"
+            exit 1
+            ;;
+    esac
+fi
+
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-1234}"
 
@@ -21,4 +41,4 @@ exec python -m mlx_server.main \
     --model "$MODEL" \
     --host "$HOST" \
     --port "$PORT" \
-    "$@"
+    "${@:2}"

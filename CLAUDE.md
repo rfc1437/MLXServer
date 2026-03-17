@@ -1,6 +1,6 @@
 # MLX Server
 
-OpenAI-compatible API server for Gemma 3 4B (vision + tool use) on Apple Silicon via MLX.
+OpenAI-compatible API server for local LLMs on Apple Silicon via MLX. Supports Gemma 3 4B and Qwen3 VL 4B (vision + tool use).
 
 ## Quick Start
 
@@ -8,11 +8,15 @@ OpenAI-compatible API server for Gemma 3 4B (vision + tool use) on Apple Silicon
 # Activate virtual environment
 source .venv/bin/activate
 
-# Run the server (downloads model on first run)
+# Run with Gemma 3 (default)
 ./run.sh
+
+# Run with Qwen3
+./run.sh qwen
 
 # Or directly:
 python -m mlx_server.main --model mlx-community/gemma-3-4b-it-4bit --port 1234
+python -m mlx_server.main --model mlx-community/Qwen3-VL-4B-Instruct-4bit --port 1234
 ```
 
 ## Project Structure
@@ -21,11 +25,18 @@ python -m mlx_server.main --model mlx-community/gemma-3-4b-it-4bit --port 1234
 - `mlx_server/engine.py` — Model loading, prompt building, generation (mlx_vlm)
 - `mlx_server/models.py` — Pydantic models for OpenAI API request/response types
 
+## Supported Models
+
+| Alias | HuggingFace ID | Notes |
+|-------|---------------|-------|
+| `gemma` | `mlx-community/gemma-3-4b-it-4bit` | Vision + tool use via `tool_code` blocks |
+| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | Vision + tool use via `<tool_call>` tags |
+
 ## Key Design Decisions
 
 - Uses `mlx_vlm` (not `mlx_lm`) as the inference backend — this supports both text and vision in a single model load
-- Gemma 3 has no system role — system messages are converted to user/assistant pairs
-- Tool use is prompt-engineered: tools are injected into the system prompt with `<tool_call>` XML tags, and parsed from model output
+- Model-specific prompt formatting: Gemma converts system→user/assistant pairs and uses `tool_code` blocks; Qwen3 uses native system role and `<tool_call>` XML tags
+- Offline-first: if the model is already cached locally (~/.cache/huggingface/hub/), the server resolves the local snapshot path directly — no network requests are made (HEAD checks, update checks, etc.)
 - Thread lock on generation (single-request-at-a-time) — MLX models aren't safe for concurrent generation
 - 128k context window supported via the model's native capabilities
 
