@@ -24,6 +24,12 @@ enum ToolCallParser {
             return (gemmaClean, gemmaCalls)
         }
 
+        // Try bare function calls matching known tool names: tool_name(args...)
+        let (bareClean, bareCalls) = parseBareToolCalls(text: text, tools: tools)
+        if !bareCalls.isEmpty {
+            return (bareClean, bareCalls)
+        }
+
         return (text, [])
     }
 
@@ -177,6 +183,59 @@ enum ToolCallParser {
             }
 
             let callId = String(format: "call_%d_%08d", i, abs(jsonStr.hashValue) % 100_000_000)
+            toolCalls.append(ParsedToolCall(id: callId, name: name, arguments: argsJSON))
+        }
+
+        let cleanText = regex.stringByReplacingMatches(
+            in: text, range: NSRange(location: 0, length: nsText.length),
+            withTemplate: ""
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (cleanText, toolCalls)
+    }
+
+    // MARK: - Bare function calls: tool_name(args...)
+
+    /// Parse bare function calls that match known tool names.
+    /// Handles models that output tool calls without fences or XML tags.
+    private static func parseBareToolCalls(text: String, tools: [APIToolDefinition]?) -> (String, [ParsedToolCall]) {
+        guard let tools, !tools.isEmpty else { return (text, []) }
+
+        let toolNames = tools.map { $0.function.name }
+        guard !toolNames.isEmpty else { return (text, []) }
+
+        // Build regex: (tool_name1|tool_name2)\s*\(.*\)
+        let escapedNames = toolNames.map { NSRegularExpression.escapedPattern(for: $0) }
+        let pattern = "(" + escapedNames.joined(separator: "|") + #")\s*\((.*)\)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .dotMatchesLineSeparators) else {
+            return (text, [])
+        }
+
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        guard !matches.isEmpty else { return (text, []) }
+
+        var toolDefs: [String: [String]] = [:]
+        for tool in tools {
+            let paramNames = tool.function.parameters?["properties"]?.value as? [String: Any]
+            toolDefs[tool.function.name] = paramNames.map { Array($0.keys).sorted() } ?? []
+        }
+
+        var toolCalls: [ParsedToolCall] = []
+        for (i, match) in matches.enumerated() {
+            let name = nsText.substring(with: match.range(at: 1))
+            let argsStr = nsText.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            var args: [String: Any] = [:]
+            if !argsStr.isEmpty {
+                if let (_, parsed) = parsePythonCall("\(name)(\(argsStr))", toolDefs: toolDefs) as (String, [String: Any])? {
+                    args = parsed
+                }
+            }
+
+            let argsJSON = (try? JSONSerialization.data(withJSONObject: args))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            let callId = String(format: "call_%d_%08d", i, abs(name.hashValue) % 100_000_000)
             toolCalls.append(ParsedToolCall(id: callId, name: name, arguments: argsJSON))
         }
 

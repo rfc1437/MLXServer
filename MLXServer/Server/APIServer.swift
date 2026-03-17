@@ -20,6 +20,7 @@ final class APIServer {
     private var cachedSession: ChatSession?
     private var cachedMessages: [Chat.Message]?
     private var cachedModelId: String?
+    private var cachedInstructions: String = ""
 
     func start(modelManager: ModelManager, port: Int = 1234) {
         guard !isRunning else { return }
@@ -29,6 +30,10 @@ final class APIServer {
         do {
             let params = NWParameters.tcp
             params.allowLocalEndpointReuse = true
+            // Disable Nagle's algorithm so small SSE events go out immediately
+            if let tcpOptions = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+                tcpOptions.noDelay = true
+            }
             listener = try NWListener(using: params, on: NWEndpoint.Port(integerLiteral: UInt16(port)))
 
             listener?.stateUpdateHandler = { [weak self] state in
@@ -68,6 +73,7 @@ final class APIServer {
         cachedSession = nil
         cachedMessages = nil
         cachedModelId = nil
+        cachedInstructions = ""
         inferenceStats.stopSampling()
     }
 
@@ -183,6 +189,7 @@ final class APIServer {
                     cachedSession = nil
                     cachedMessages = nil
                     cachedModelId = nil
+                    cachedInstructions = ""
                     await modelManager.loadModel(targetConfig)
                 }
             }
@@ -196,6 +203,7 @@ final class APIServer {
             cachedSession = nil
             cachedMessages = nil
             cachedModelId = nil
+            cachedInstructions = ""
             await modelManager.loadModel(config)
         }
 
@@ -220,44 +228,39 @@ final class APIServer {
         var images: [UserInput.Image] = []
         let currentModelRepoId = modelManager.currentModel?.repoId ?? modelName
 
-        // Inject tool definitions into the system prompt if tools are provided
+        // Build the instructions string (system prompt + tool definitions).
+        // This is passed to ChatSession via `instructions:` rather than injected
+        // as history messages, so it avoids an expensive history-replay prefill.
+        var instructions: String = ""
+
+        // Collect system message text from the request
+        for msg in request.messages where msg.role == "system" {
+            let text = msg.content?.textContent ?? ""
+            if !text.isEmpty {
+                if !instructions.isEmpty { instructions += "\n\n" }
+                instructions += text
+            }
+        }
+
+        // Append tool definitions to instructions
         if let tools = request.tools, !tools.isEmpty {
             let toolSystemPrompt = ToolPromptBuilder.buildSystemPrompt(tools: tools, modelId: currentModelRepoId)
-
-            // Check if there's already a system message
-            let hasSystem = request.messages.contains { $0.role == "system" }
-            if hasSystem {
-                // Append tool prompt to existing system message (handled below during conversion)
-            } else {
-                // For Gemma: inject as user message (Gemma doesn't support system role natively)
-                // For Qwen: inject as system message
-                if currentModelRepoId.lowercased().contains("qwen") {
-                    chatMessages.append(Chat.Message(role: .system, content: toolSystemPrompt))
-                } else {
-                    chatMessages.append(Chat.Message(role: .user, content: toolSystemPrompt))
-                    chatMessages.append(Chat.Message(role: .assistant, content: "Understood. I will use the provided tools when appropriate."))
-                }
-            }
+            if !instructions.isEmpty { instructions += "\n\n" }
+            instructions += toolSystemPrompt
         }
 
         let toolsForInjection = request.tools
         let isQwen = currentModelRepoId.lowercased().contains("qwen")
 
-        for msg in request.messages {
+        // Convert non-system messages to Chat.Message
+        for msg in request.messages where msg.role != "system" {
             let role: Chat.Message.Role = switch msg.role {
-            case "system": .system
             case "assistant": .assistant
             case "tool": .user
             default: .user
             }
 
             var text = msg.content?.textContent ?? ""
-
-            // If this is a system message and tools are provided, append tool definitions
-            if msg.role == "system", let tools = toolsForInjection, !tools.isEmpty {
-                let toolSystemPrompt = ToolPromptBuilder.buildSystemPrompt(tools: tools, modelId: currentModelRepoId)
-                text = text + "\n\n" + toolSystemPrompt
-            }
 
             // Format tool_call_id responses as tool_output for the model
             if msg.role == "tool" {
@@ -328,6 +331,7 @@ final class APIServer {
         let canReuse = cachedSession != nil
             && cachedModelId == currentModelId
             && cachedMessages != nil
+            && cachedInstructions == instructions
             && messagesMatch(cachedMessages!, allButLast)
 
         let session: ChatSession
@@ -339,15 +343,21 @@ final class APIServer {
             if cachedSession != nil {
                 print("[APIServer] History diverged, creating fresh session")
             }
+            // Use `instructions:` for system/tool prompt (matches internal chat pattern).
+            // Only conversation turns go in `history:` — this avoids replaying the
+            // large tool prompt as history on every new session.
+            let instr = instructions.isEmpty ? nil : instructions
             if !allButLast.isEmpty {
                 session = ChatSession(
                     container,
+                    instructions: instr,
                     history: allButLast,
                     generateParameters: generateParams
                 )
             } else {
                 session = ChatSession(
                     container,
+                    instructions: instr,
                     generateParameters: generateParams
                 )
             }
@@ -356,7 +366,7 @@ final class APIServer {
         // Extract images from the last message only (ChatSession.streamDetails takes images separately)
         let lastImages = lastMessage.images
 
-        inferenceStats.requestStarted(contextLength: contextLength)
+        LiveCounters.shared.requestStarted(contextLength: contextLength)
 
         if isStream {
             await handleStreamingResponse(
@@ -387,6 +397,7 @@ final class APIServer {
         cachedSession = session
         cachedMessages = chatMessages  // full messages including the one just sent
         cachedModelId = currentModelId
+        cachedInstructions = instructions
     }
 
     /// Decode a base64 data URI (data:image/png;base64,...) into a UserInput.Image.
@@ -439,20 +450,20 @@ final class APIServer {
                 case .chunk(let text):
                     fullText += text
                     completionTokens += 1
-                    inferenceStats.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
+                    LiveCounters.shared.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
                 case .info(let info):
                     promptTokens = info.promptTokenCount
                     completionTokens = info.generationTokenCount
-                    inferenceStats.prefillCompleted(promptTokens: promptTokens)
+                    LiveCounters.shared.prefillCompleted(promptTokens: promptTokens)
                     if info.tokensPerSecond > 0 {
-                        inferenceStats.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
+                        LiveCounters.shared.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
                     }
                 case .toolCall(let call):
                     frameworkToolCalls.append(call)
                 }
             }
 
-            inferenceStats.requestCompleted(promptTokens: promptTokens, generationTokens: completionTokens)
+            LiveCounters.shared.requestCompleted(generationTokens: completionTokens)
 
             // Parse tool calls: first check framework-detected ones, then our own text parser
             var finishReason = "stop"
@@ -524,7 +535,7 @@ final class APIServer {
                 sendResponse(connection: connection, status: 200, body: String(data: json, encoding: .utf8) ?? "{}")
             }
         } catch {
-            inferenceStats.requestCompleted(promptTokens: 0, generationTokens: 0)
+            LiveCounters.shared.requestCompleted(generationTokens: 0)
             sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
         }
     }
@@ -552,15 +563,10 @@ final class APIServer {
             "",
         ].joined(separator: "\r\n")
 
-        let headerSent = await withCheckedContinuation { continuation in
-            connection.send(content: header.data(using: .utf8), completion: .contentProcessed({ _ in
-                continuation.resume(returning: true)
-            }))
-        }
-        guard headerSent else { return }
+        await Self.sendData(connection: connection, data: header.data(using: .utf8)!)
 
         // Send initial role chunk
-        sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
+        await Self.sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
             id: requestId,
             object: "chat.completion.chunk",
             created: created,
@@ -569,78 +575,39 @@ final class APIServer {
             usage: nil
         ))
 
-        // When tools are available, buffer full response to parse tool calls
-        // (otherwise raw tool-call markup leaks into streamed text)
-        let bufferForTools = tools != nil && !(tools?.isEmpty ?? true)
+        let hasTools = tools != nil && !(tools?.isEmpty ?? true)
 
-        var promptTokens = 0
-        var completionTokens = 0
-        var fullText = ""
-        var frameworkToolCalls: [MLXLMCommon.ToolCall] = []
-
-        do {
-            let stream = session.streamDetails(
-                to: prompt,
-                images: images,
-                videos: []
+        // Run the generation loop OFF MainActor.
+        // ChatSession and NWConnection don't need MainActor.
+        // Running on MainActor caused every token to compete with SwiftUI
+        // rendering, creating back-pressure that coalesced all output.
+        let stream = session.streamDetails(
+            to: prompt,
+            images: images,
+            videos: []
+        )
+        // Transfer non-Sendable values to the nonisolated loop.
+        // Safe because we don't touch session/images again until after the loop.
+        let result = await {
+            nonisolated(unsafe) let stream = stream
+            return await Self.runStreamingLoop(
+                connection: connection,
+                stream: stream,
+                requestId: requestId,
+                created: created,
+                modelName: modelName
             )
+        }()
 
-            for try await generation in stream {
-                switch generation {
-                case .chunk(let text):
-                    completionTokens += 1
-                    fullText += text
-                    inferenceStats.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
+        let (promptTokens, completionTokens, fullText, frameworkToolCalls) = result
 
-                    if !bufferForTools {
-                        sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
-                            id: requestId,
-                            object: "chat.completion.chunk",
-                            created: created,
-                            model: modelName,
-                            choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: text, tool_calls: nil), finish_reason: nil)],
-                            usage: nil
-                        ))
-                    }
-
-                case .info(let info):
-                    promptTokens = info.promptTokenCount
-                    completionTokens = info.generationTokenCount
-                    inferenceStats.prefillCompleted(promptTokens: promptTokens)
-                    if info.tokensPerSecond > 0 {
-                        inferenceStats.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
-                    }
-
-                case .toolCall(let call):
-                    frameworkToolCalls.append(call)
-                }
-            }
-        } catch {
-            inferenceStats.requestCompleted(promptTokens: promptTokens, generationTokens: completionTokens)
-            let errorEvent = "data: {\"error\":\"\(error.localizedDescription)\"}\n\n"
-            connection.send(content: errorEvent.data(using: .utf8), completion: .contentProcessed({ _ in }))
-        }
+        // Stats were already updated by LiveCounters inside the loop
 
         // Post-generation: handle tool calls (framework-detected or text-parsed)
         var finishReason = "stop"
 
         if !frameworkToolCalls.isEmpty {
-            // Framework natively detected tool calls (e.g. Qwen)
             finishReason = "tool_calls"
-
-            // Emit any buffered text content
-            if !fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
-                    id: requestId,
-                    object: "chat.completion.chunk",
-                    created: created,
-                    model: modelName,
-                    choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: fullText, tool_calls: nil), finish_reason: nil)],
-                    usage: nil
-                ))
-            }
-
-            // Emit tool call chunks
             for (i, tc) in frameworkToolCalls.enumerated() {
                 let argsDict = tc.function.arguments.mapValues { $0.anyValue }
                 let argsJSON: String
@@ -657,7 +624,7 @@ final class APIServer {
                     type: "function",
                     function: APIFunctionCall(name: tc.function.name, arguments: argsJSON)
                 )
-                sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
+                await Self.sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
                     id: requestId,
                     object: "chat.completion.chunk",
                     created: created,
@@ -666,27 +633,11 @@ final class APIServer {
                     usage: nil
                 ))
             }
-        } else if bufferForTools {
-            // Text-parsed tool calls (e.g. Gemma tool_code blocks)
-            let (cleanText, parsed) = ToolCallParser.parse(text: fullText, tools: tools)
+        } else if hasTools {
+            let (_, parsed) = ToolCallParser.parse(text: fullText, tools: tools)
             if !parsed.isEmpty {
                 finishReason = "tool_calls"
-                fullText = cleanText
             }
-
-            // Emit buffered content (cleaned of tool-call markup)
-            if !fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
-                    id: requestId,
-                    object: "chat.completion.chunk",
-                    created: created,
-                    model: modelName,
-                    choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: fullText, tool_calls: nil), finish_reason: nil)],
-                    usage: nil
-                ))
-            }
-
-            // Emit tool call chunks
             for (i, tc) in parsed.enumerated() {
                 let apiToolCall = APIToolCall(
                     index: i,
@@ -694,7 +645,7 @@ final class APIServer {
                     type: "function",
                     function: APIFunctionCall(name: tc.name, arguments: tc.arguments)
                 )
-                sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
+                await Self.sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
                     id: requestId,
                     object: "chat.completion.chunk",
                     created: created,
@@ -706,7 +657,7 @@ final class APIServer {
         }
 
         // Final chunk with finish_reason and usage
-        sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
+        await Self.sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
             id: requestId,
             object: "chat.completion.chunk",
             created: created,
@@ -719,20 +670,83 @@ final class APIServer {
             )
         ))
 
-        inferenceStats.requestCompleted(promptTokens: promptTokens, generationTokens: completionTokens)
+        LiveCounters.shared.requestCompleted(generationTokens: completionTokens)
 
         // Send [DONE] and close
-        let done = "data: [DONE]\n\n"
-        connection.send(content: done.data(using: .utf8), completion: .contentProcessed({ _ in
-            connection.cancel()
-        }))
+        await Self.sendData(connection: connection, data: "data: [DONE]\n\n".data(using: .utf8)!)
+        connection.cancel()
     }
 
-    private func sendSSEEvent(connection: NWConnection, chunk: APIChatCompletionChunk) {
+    /// Run the token generation + SSE send loop entirely off MainActor.
+    /// This is critical: if the loop runs on MainActor, every token requires
+    /// multiple actor hops competing with SwiftUI, causing all output to batch.
+    nonisolated private static func runStreamingLoop(
+        connection: NWConnection,
+        stream: AsyncThrowingStream<Generation, any Error>,
+        requestId: String,
+        created: Int,
+        modelName: String
+    ) async -> (Int, Int, String, [MLXLMCommon.ToolCall]) {
+        var promptTokens = 0
+        var completionTokens = 0
+        var fullText = ""
+        var frameworkToolCalls: [MLXLMCommon.ToolCall] = []
+
+        do {
+            for try await generation in stream {
+                switch generation {
+                case .chunk(let text):
+                    completionTokens += 1
+                    fullText += text
+
+                    // Update live counters directly — no MainActor hop needed
+                    LiveCounters.shared.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
+
+                    // Send directly — no MainActor hop.
+                    await sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
+                        id: requestId,
+                        object: "chat.completion.chunk",
+                        created: created,
+                        model: modelName,
+                        choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: text, tool_calls: nil), finish_reason: nil)],
+                        usage: nil
+                    ))
+
+                case .info(let info):
+                    promptTokens = info.promptTokenCount
+                    completionTokens = info.generationTokenCount
+                    LiveCounters.shared.prefillCompleted(promptTokens: promptTokens)
+                    if info.tokensPerSecond > 0 {
+                        LiveCounters.shared.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
+                    }
+
+                case .toolCall(let call):
+                    frameworkToolCalls.append(call)
+                }
+            }
+        } catch {
+            let errorEvent = "data: {\"error\":\"\(error.localizedDescription)\"}\n\n"
+            await sendData(connection: connection, data: errorEvent.data(using: .utf8)!)
+        }
+
+        return (promptTokens, completionTokens, fullText, frameworkToolCalls)
+    }
+
+    /// Send an SSE event and wait for the protocol stack to process it.
+    nonisolated private static func sendSSEEvent(connection: NWConnection, chunk: APIChatCompletionChunk) async {
         guard let json = try? JSONEncoder().encode(chunk),
               let jsonString = String(data: json, encoding: .utf8) else { return }
         let event = "data: \(jsonString)\n\n"
-        connection.send(content: event.data(using: .utf8), completion: .contentProcessed({ _ in }))
+        await sendData(connection: connection, data: event.data(using: .utf8)!)
+    }
+
+    /// Send raw data on the connection and wait for the protocol stack to process it.
+    nonisolated private static func sendData(connection: NWConnection, data: Data) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            connection.send(content: data, completion: .contentProcessed({ _ in
+                continuation.resume()
+            }))
+        }
     }
 
     // MARK: - HTTP helpers
@@ -778,19 +792,19 @@ final class APIServer {
         ]
     }
 
-    /// Check if cached messages are a prefix of new messages (for KV cache reuse).
-    /// The cached messages include the full history from the previous request.
-    /// For cache reuse, all but the last message of the new request must match
-    /// all but the last message of the cached messages (the cached last was the
-    /// previous user prompt, which is now part of the history).
+    /// Check if the cached session can be reused for the new history.
+    ///
+    /// After a request the session's KV cache contains:
+    ///   cachedMessages (history + user prompt) + the generated assistant response.
+    /// On the next request the client sends back the full conversation, so
+    /// `newHistory` (allButLast) is typically `cachedMessages` + 1 assistant reply.
+    /// We allow reuse when `cached` is a prefix of `newHistory` and there is at most
+    /// one extra message (the assistant response the session already generated).
+    /// More than one extra message (e.g. injected tool results) means the session
+    /// hasn't processed them, so we must create a fresh session.
     private func messagesMatch(_ cached: [Chat.Message], _ newHistory: [Chat.Message]) -> Bool {
-        // The cached messages are the full chatMessages from the previous request.
-        // For the cache to be reusable, the new history (allButLast) must match
-        // exactly what the session has already processed.
-        // After a request, the session has seen: cachedMessages' history + prompt + response.
-        // So on the next request, if newHistory == cachedMessages, the session already
-        // contains all of those turns and we can just send the new last message.
-        guard cached.count == newHistory.count else { return false }
+        guard cached.count <= newHistory.count,
+              newHistory.count <= cached.count + 1 else { return false }
         for (a, b) in zip(cached, newHistory) {
             if a.role != b.role || a.content != b.content { return false }
         }
