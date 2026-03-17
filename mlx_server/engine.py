@@ -434,11 +434,9 @@ class InferenceEngine:
     # Generation
     # ------------------------------------------------------------------
 
-    # Common kwargs for mlx_vlm generate calls — optimized for Apple Silicon
-    _GENERATE_KWARGS = {
-        "kv_bits": 8,           # Quantize KV cache to 8-bit (halves memory bandwidth)
-        "kv_group_size": 64,    # Group size for KV quantization
-    }
+    # Common kwargs for mlx_vlm generate calls
+    # Note: KV cache quantization is not supported with Gemma 3's RotatingKVCache
+    _GENERATE_KWARGS: dict = {}
 
     def generate(
         self,
