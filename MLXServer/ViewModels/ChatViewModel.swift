@@ -43,6 +43,7 @@ final class ChatViewModel {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, modelManager.isReady else { return }
 
+        modelManager.touchActivity()
         ensureSession()
         guard let session = chatSession else { return }
 

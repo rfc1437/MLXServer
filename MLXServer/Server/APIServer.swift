@@ -189,10 +189,22 @@ final class APIServer {
             // If we can't resolve the model, continue with whatever is loaded
         }
 
+        // Reload model if it was idle-unloaded
+        if modelManager.modelContainer == nil, let lastModelId = Preferences.lastModelId,
+           let config = ModelConfig.resolve(lastModelId) {
+            print("[APIServer] Reloading idle-unloaded model: \(config.repoId)")
+            cachedSession = nil
+            cachedMessages = nil
+            cachedModelId = nil
+            await modelManager.loadModel(config)
+        }
+
         guard modelManager.isReady, let container = modelManager.modelContainer else {
             sendResponse(connection: connection, status: 503, body: #"{"error":"No model loaded"}"#)
             return
         }
+
+        modelManager.touchActivity()
 
         let isStream = request.stream ?? false
         let temperature = request.temperature ?? 0.7

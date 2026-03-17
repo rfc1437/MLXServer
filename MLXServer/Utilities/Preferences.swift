@@ -39,4 +39,16 @@ enum Preferences {
         get { defaults.bool(forKey: apiAutoStartKey) }
         set { defaults.set(newValue, forKey: apiAutoStartKey) }
     }
+
+    // MARK: - Idle unload
+
+    private static let idleUnloadMinutesKey = "idleUnloadMinutes"
+
+    static var idleUnloadMinutes: Int {
+        get {
+            let val = defaults.integer(forKey: idleUnloadMinutesKey)
+            return val > 0 ? val : 3
+        }
+        set { defaults.set(newValue, forKey: idleUnloadMinutesKey) }
+    }
 }

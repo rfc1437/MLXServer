@@ -14,6 +14,9 @@ final class ModelManager {
     var loadingModelName: String = ""
     var errorMessage: String?
 
+    private var idleTimer: Timer?
+    private(set) var lastUsed: Date?
+
     /// Load a model, unloading the current one first.
     /// Prefers the local snapshot from ~/.cache/huggingface/hub/ (shared with the Python server).
     /// Only downloads if the model isn't cached locally.
@@ -50,6 +53,7 @@ final class ModelManager {
 
             self.modelContainer = container
             self.currentModel = config
+            touchActivity()
         } catch {
             self.errorMessage = "Failed to load model: \(error.localizedDescription)"
         }
@@ -59,9 +63,27 @@ final class ModelManager {
 
     /// Unload the current model and free GPU memory.
     func unloadModel() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        lastUsed = nil
         modelContainer = nil
         currentModel = nil
         MLX.GPU.clearCache()
+    }
+
+    /// Record model activity and reset the idle unload timer.
+    func touchActivity() {
+        lastUsed = Date()
+        idleTimer?.invalidate()
+        let minutes = Preferences.idleUnloadMinutes
+        guard minutes > 0 else { return }
+        idleTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60), repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.modelContainer != nil else { return }
+                print("[ModelManager] Idle for \(minutes) min — unloading model")
+                self.unloadModel()
+            }
+        }
     }
 
     /// Whether a model is ready for generation.
