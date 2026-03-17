@@ -23,7 +23,14 @@ DEFAULT_MODEL = "mlx-community/gemma-3-4b-it-4bit"
 # Known model aliases for quick selection
 MODEL_ALIASES: dict[str, str] = {
     "gemma": "mlx-community/gemma-3-4b-it-4bit",
+    "gemma3n": "mlx-community/gemma-3n-E4B-it-4bit",
     "qwen": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+}
+
+# Fallback context lengths for models whose config doesn't expose
+# max_position_embeddings (e.g. gemma3n uses a MatFormer architecture).
+_CONTEXT_LENGTH_OVERRIDES: dict[str, int] = {
+    "gemma3n": 32768,
 }
 
 
@@ -300,6 +307,9 @@ class InferenceEngine:
         """Max context length from the model config."""
         if self.config is None:
             return 0
+        # Some architectures don't expose max_position_embeddings in config
+        if self._model_type in _CONTEXT_LENGTH_OVERRIDES:
+            return _CONTEXT_LENGTH_OVERRIDES[self._model_type]
         # VLMs nest the LLM config under text_config
         text_cfg = getattr(self.config, "text_config", self.config)
         return getattr(text_cfg, "max_position_embeddings", 0)
@@ -1095,6 +1105,10 @@ class ModelManager:
             return None
         try:
             config = json.loads(config_file.read_text())
+            model_type = config.get("model_type", "")
+            # Check override table for models that don't expose it in config
+            if model_type in _CONTEXT_LENGTH_OVERRIDES:
+                return _CONTEXT_LENGTH_OVERRIDES[model_type]
             # VLMs nest under text_config
             text_cfg = config.get("text_config", config)
             return text_cfg.get("max_position_embeddings")

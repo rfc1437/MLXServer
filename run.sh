@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 source .venv/bin/activate
 
 # --- Model selection ---
-# Usage:  ./run.sh [gemma|qwen]
+# Usage:  ./run.sh [gemma|gemma3n|qwen]
 # Or set MODEL env var directly for a custom model.
 
 MODEL_CHOICE="${1:-gemma}"
@@ -18,12 +18,15 @@ if [[ -z "${MODEL:-}" ]]; then
         gemma)
             MODEL="mlx-community/gemma-3-4b-it-4bit"
             ;;
+        gemma3n)
+            MODEL="mlx-community/gemma-3n-E4B-it-4bit"
+            ;;
         qwen)
             MODEL="mlx-community/Qwen3-VL-4B-Instruct-4bit"
             ;;
         *)
             echo "Unknown model choice: $MODEL_CHOICE"
-            echo "Usage: $0 [gemma|qwen]"
+            echo "Usage: $0 [gemma|gemma3n|qwen]"
             exit 1
             ;;
     esac

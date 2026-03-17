@@ -29,8 +29,9 @@ python -m mlx_server.main --model mlx-community/Qwen3-VL-4B-Instruct-4bit --port
 
 | Alias | HuggingFace ID | Notes |
 |-------|---------------|-------|
-| `gemma` | `mlx-community/gemma-3-4b-it-4bit` | Vision + tool use via `tool_code` blocks |
-| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | Vision + tool use via `<tool_call>` tags |
+| `gemma` | `mlx-community/gemma-3-4b-it-4bit` | Vision + tool use via `tool_code` blocks (128k context) |
+| `gemma3n` | `mlx-community/gemma-3n-E4B-it-4bit` | Vision/audio/video + tool use via `tool_code` blocks (32k context, ~1.5x faster) |
+| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | Vision + tool use via `<tool_call>` tags (256k context) |
 
 ## Key Design Decisions
 

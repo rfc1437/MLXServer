@@ -7,6 +7,7 @@ OpenAI-compatible API server for running local LLMs on Apple Silicon via [MLX](h
 | Alias | Model | Context | Capabilities |
 |-------|-------|---------|-------------|
 | `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | Vision, tool use (`tool_code` blocks) |
+| `gemma3n` | `mlx-community/gemma-3n-E4B-it-4bit` | 32k | Vision/audio/video, tool use (`tool_code` blocks), ~1.5x faster |
 | `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | Vision, tool use (`<tool_call>` tags) |
 
 ## Quick Start
