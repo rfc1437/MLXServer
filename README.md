@@ -4,10 +4,10 @@ OpenAI-compatible API server for running local LLMs on Apple Silicon via [MLX](h
 
 ## Supported Models
 
-| Alias | Model | Capabilities |
-|-------|-------|-------------|
-| `gemma` | `mlx-community/gemma-3-4b-it-4bit` | Vision, tool use (`tool_code` blocks) |
-| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | Vision, tool use (`<tool_call>` tags) |
+| Alias | Model | Context | Capabilities |
+|-------|-------|---------|-------------|
+| `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | Vision, tool use (`tool_code` blocks) |
+| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | Vision, tool use (`<tool_call>` tags) |
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ The server starts at `http://127.0.0.1:1234`.
 
 Standard OpenAI-compatible endpoints:
 
-- `GET /v1/models` — lists all available models
+- `GET /v1/models` — lists all available models with `context_window` sizes
 - `POST /v1/chat/completions` — chat completions (streaming and non-streaming)
 - `GET /health` — health check
 
@@ -67,6 +67,16 @@ Pass images as base64 data URIs or URLs in the `image_url` content part:
 }
 ```
 
+### Context Window Management
+
+Each model's context window is read from its HuggingFace config (`max_position_embeddings`) and reported in `/v1/models` via the `context_window` field. Clients can use this to manage conversation length proactively.
+
+If a request exceeds the context window, the server:
+
+1. Automatically summarizes older messages (keeping system messages and the last 6 messages intact)
+2. Retries with the compressed conversation
+3. Returns an OpenAI-compatible `context_length_exceeded` error if it still doesn't fit
+
 ### Tool Use
 
 Pass tools in the `tools` field (OpenAI format). The server handles model-specific formatting and parses tool calls from the output automatically.
@@ -94,4 +104,4 @@ mlx_server/
 - Offline-first: if the model is cached locally (`~/.cache/huggingface/hub/`), no network requests are made
 - Thread lock on generation — MLX models aren't safe for concurrent generation
 - KV prefix caching for multi-turn conversations
-- 128k context window via native model capabilities
+- Context window read from each model's config (Gemma 3 4B: 128k, Qwen3-VL 4B: 256k) with automatic summarization fallback

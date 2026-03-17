@@ -38,7 +38,7 @@ python -m mlx_server.main --model mlx-community/Qwen3-VL-4B-Instruct-4bit --port
 - Model-specific prompt formatting: Gemma converts system→user/assistant pairs and uses `tool_code` blocks; Qwen3 uses native system role and `<tool_call>` XML tags
 - Offline-first: if the model is already cached locally (~/.cache/huggingface/hub/), the server resolves the local snapshot path directly — no network requests are made (HEAD checks, update checks, etc.)
 - Thread lock on generation (single-request-at-a-time) — MLX models aren't safe for concurrent generation
-- 128k context window supported via the model's native capabilities
+- Context window size is read from each model's config at load time (Gemma 3 4B: 128k, Qwen3-VL 4B: 256k)
 
 ## Dependencies
 
