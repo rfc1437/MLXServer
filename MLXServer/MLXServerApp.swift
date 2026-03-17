@@ -14,8 +14,8 @@ struct MLXServerApp: App {
             ContentView()
                 .environment(modelManager)
                 .task {
-                    // Auto-load last used model (or default)
-                    let modelId = Preferences.lastModelId ?? ModelConfig.default.id
+                    // Auto-load: configured default → last used → built-in default
+                    let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
                     if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {
                         await modelManager.loadModel(config)
                     }

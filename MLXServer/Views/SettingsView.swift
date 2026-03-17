@@ -5,9 +5,25 @@ struct SettingsView: View {
     @State private var apiPort: String = String(Preferences.apiPort)
     @State private var apiAutoStart: Bool = Preferences.apiAutoStart
     @State private var idleUnloadMinutes: String = String(Preferences.idleUnloadMinutes)
+    @State private var defaultModelId: String = Preferences.defaultModelId ?? ModelConfig.default.id
 
     var body: some View {
         Form {
+            Section("Startup") {
+                Picker("Default model", selection: $defaultModelId) {
+                    ForEach(ModelConfig.availableModels) { model in
+                        Text(model.displayName).tag(model.id)
+                    }
+                }
+                .onChange(of: defaultModelId) {
+                    Preferences.defaultModelId = defaultModelId
+                }
+
+                Text("The model to load automatically when the app starts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("System Prompt") {
                 TextEditor(text: $systemPrompt)
                     .font(.body.monospaced())
@@ -59,6 +75,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 450, height: 380)
+        .frame(width: 450, height: 460)
     }
 }

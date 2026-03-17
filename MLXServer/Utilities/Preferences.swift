@@ -13,6 +13,15 @@ enum Preferences {
         set { defaults.set(newValue, forKey: lastModelKey) }
     }
 
+    // MARK: - Default startup model
+
+    private static let defaultModelKey = "defaultModelId"
+
+    static var defaultModelId: String? {
+        get { defaults.string(forKey: defaultModelKey) }
+        set { defaults.set(newValue, forKey: defaultModelKey) }
+    }
+
     // MARK: - System prompt
 
     private static let systemPromptKey = "systemPrompt"
