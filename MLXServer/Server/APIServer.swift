@@ -221,12 +221,22 @@ final class APIServer {
         let requestId = "chatcmpl-\(UUID().uuidString.prefix(12).lowercased())"
         let created = Int(Date().timeIntervalSince1970)
         let modelName = request.model ?? modelManager.currentModel?.repoId ?? "unknown"
+        let currentModel = modelManager.currentModel
         let contextLength = modelManager.currentModel?.contextLength ?? 0
+
+        if let tools = request.tools, !tools.isEmpty, currentModel?.supportsTools != true {
+            sendResponse(
+                connection: connection,
+                status: 400,
+                body: #"{"error":{"message":"The currently selected model does not support tool calls.","type":"invalid_request_error","code":"tools_not_supported"}}"#
+            )
+            return
+        }
 
         // Convert API messages to Chat.Message, extracting images from content parts
         var chatMessages: [Chat.Message] = []
         var images: [UserInput.Image] = []
-        let currentModelRepoId = modelManager.currentModel?.repoId ?? modelName
+        let currentModelRepoId = currentModel?.repoId ?? modelName
 
         // Build the instructions string (system prompt + tool definitions).
         // This is passed to ChatSession via `instructions:` rather than injected
@@ -296,6 +306,15 @@ final class APIServer {
             // Attach images to this specific message
             chatMessages.append(Chat.Message(role: role, content: text, images: messageImages))
             images.append(contentsOf: messageImages)
+        }
+
+        if !images.isEmpty, currentModel?.supportsImages != true {
+            sendResponse(
+                connection: connection,
+                status: 400,
+                body: #"{"error":{"message":"The currently selected model does not support image inputs.","type":"invalid_request_error","code":"vision_not_supported"}}"#
+            )
+            return
         }
 
         // Context window check: estimate token count and reject if over limit

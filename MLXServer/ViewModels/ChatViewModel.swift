@@ -53,7 +53,7 @@ final class ChatViewModel {
         ensureSession()
         guard let session = chatSession else { return }
 
-        let images = attachedImages
+        let images = modelManager.currentModel?.supportsImages == true ? attachedImages : []
         inputText = ""
         attachedImages = []
 
@@ -135,6 +135,7 @@ final class ChatViewModel {
     }
 
     func attachImage(_ image: NSImage) {
+        guard modelManager.currentModel?.supportsImages == true else { return }
         attachedImages.append(image)
     }
 
@@ -152,6 +153,13 @@ final class ChatViewModel {
     /// Reset the chat session (e.g. on model switch or new conversation).
     func resetSession() {
         chatSession = nil
+    }
+
+    func handleModelChange() {
+        resetSession()
+        if modelManager.currentModel?.supportsImages != true {
+            attachedImages = []
+        }
     }
 
     // MARK: - API Server

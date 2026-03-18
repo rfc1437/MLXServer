@@ -5,10 +5,14 @@ struct ChatInputView: View {
     @Bindable var viewModel: ChatViewModel
     @State private var pasteMonitor: Any?
 
+    private var supportsImages: Bool {
+        viewModel.modelManager.currentModel?.supportsImages == true
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             // Image preview strip
-            if !viewModel.attachedImages.isEmpty {
+            if supportsImages && !viewModel.attachedImages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Array(viewModel.attachedImages.enumerated()), id: \.offset) { index, image in
@@ -46,7 +50,7 @@ struct ChatInputView: View {
                         .font(.title3)
                 }
                 .buttonStyle(.plain)
-                .disabled(!viewModel.modelManager.isReady)
+                .disabled(!viewModel.modelManager.isReady || !supportsImages)
 
                 // Text field
                 TextField("Message…", text: $viewModel.inputText, axis: .vertical)
@@ -87,6 +91,7 @@ struct ChatInputView: View {
         }
         .padding(.top, 4)
         .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+            guard supportsImages else { return false }
             for provider in providers {
                 if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                     provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
@@ -121,6 +126,7 @@ struct ChatInputView: View {
     private func installPasteMonitor() {
         guard pasteMonitor == nil else { return }
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard supportsImages else { return event }
             // Check for Cmd+V
             guard event.modifierFlags.contains(.command),
                   event.charactersIgnoringModifiers == "v" else {
@@ -178,6 +184,7 @@ struct ChatInputView: View {
     // MARK: - File picker
 
     private func pickImage() {
+        guard supportsImages else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = true

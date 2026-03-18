@@ -1,6 +1,7 @@
 import Foundation
 import Hub
 import MLX
+import MLXLLM
 import MLXLMCommon
 import MLXVLM
 
@@ -77,11 +78,21 @@ final class ModelManager {
                 configuration = config.modelConfiguration
             }
 
-            let container = try await VLMModelFactory.shared.loadContainer(
-                hub: Self.hub,
-                configuration: configuration,
-                progressHandler: progressHandler
-            )
+            let container: ModelContainer
+            switch config.loaderKind {
+            case .llm:
+                container = try await LLMModelFactory.shared.loadContainer(
+                    hub: Self.hub,
+                    configuration: configuration,
+                    progressHandler: progressHandler
+                )
+            case .vlm:
+                container = try await VLMModelFactory.shared.loadContainer(
+                    hub: Self.hub,
+                    configuration: configuration,
+                    progressHandler: progressHandler
+                )
+            }
 
             self.isDownloading = false
             self.modelContainer = container

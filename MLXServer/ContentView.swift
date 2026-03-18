@@ -22,7 +22,7 @@ struct ContentView: View {
                 }
             }
             .onChange(of: modelManager.currentModel) {
-                chatVM?.resetSession()
+                chatVM?.handleModelChange()
                 // Persist last used model
                 if let id = modelManager.currentModel?.id {
                     Preferences.lastModelId = id

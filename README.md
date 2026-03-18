@@ -1,14 +1,17 @@
 # MLX Server
 
-Native macOS app for running local LLMs on Apple Silicon via [MLX](https://github.com/ml-explore/mlx). Built with SwiftUI, it provides both a **chat UI** and an embedded **OpenAI-compatible API server**. Supports vision, tool use, and thinking mode.
+Native macOS app for running local LLMs on Apple Silicon via [MLX](https://github.com/ml-explore/mlx). Built with SwiftUI, it provides both a **chat UI** and an embedded **OpenAI-compatible API server**. Supports both vision-capable and text-only MLX models, plus tool use and thinking mode where the selected model supports them.
 
 ## Supported Models
 
-| Alias | Model | Context | Capabilities |
-|-------|-------|---------|-------------|
-| `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | Vision, tool use (`tool_code` blocks) |
-| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | Vision, tool use (`<tool_call>` tags) |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | Thinking mode, tool use |
+| Alias | Model | Context | Loader | Capabilities |
+|-------|-------|---------|--------|-------------|
+| `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | `VLMModelFactory` | Vision, tool use (`tool_code` blocks) |
+| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | `VLMModelFactory` | Vision, tool use (`<tool_call>` tags) |
+| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `LLMModelFactory` | Text-only, thinking mode, tool use |
+| `stheno` | `synk/L3-8B-Stheno-v3.2-MLX` | 8k | `LLMModelFactory` | Text-only |
+
+`stheno` is loaded as a standard MLX text model. The Hugging Face card provides an `mlx_lm.load(...)` sample rather than a VLM example, and its config reports `model_type: llama` with `max_position_embeddings: 8192`, so the app treats it as an 8k Llama-family text model.
 
 Any model in MLX format on HuggingFace can be added — there is no restriction on uploader or architecture.
 
@@ -23,7 +26,7 @@ open "build/Debug/MLX Server.app"
 
 ## App Features
 
-- **Chat interface** with markdown rendering, image attachments (file picker, drag & drop, clipboard paste, Finder copy-paste)
+- **Chat interface** with markdown rendering and model-aware image attachments (file picker, drag & drop, clipboard paste, Finder copy-paste on vision-capable models)
 - **Model picker** in toolbar with local/download status indicators and re-download button
 - **Download progress modal** — shows file progress, percentage, and speed when downloading a new model
 - **Thinking mode** — models like Qwen3.5 can reason internally before responding; thinking content appears in a collapsible box. Toggle on/off in Settings.
@@ -41,6 +44,8 @@ The embedded API server (toggle in toolbar) runs on port 1234 by default. Standa
 - `GET /v1/models` — lists available models with `context_window` sizes
 - `POST /v1/chat/completions` — chat completions (streaming and non-streaming)
 - `GET /health` — health check
+
+Capability checks are enforced server-side. If a request sends images to a text-only model or tools to a model without tool support, the server returns a `400 invalid_request_error`.
 
 ### Model Swapping
 
@@ -69,9 +74,13 @@ Pass images as base64 data URIs in the `image_url` content part:
 }
 ```
 
+Text-only models such as `qwen3.5-9b` and `stheno` reject image inputs.
+
 ### Tool Use
 
 Pass tools in the `tools` field (OpenAI format). The server handles model-specific formatting (Gemma `tool_code` blocks, Qwen `<tool_call>` XML tags) and parses tool calls from output automatically. When tools are present during streaming, output is buffered to strip tool-call markup before sending to the client.
+
+`stheno` is currently documented and configured as a plain text model, so tool requests to it are rejected.
 
 ## Project Structure
 
@@ -112,7 +121,7 @@ build.sh        — One-command build script (xcodegen + xcodebuild)
 
 ## Key Design Decisions
 
-- Uses `mlx-swift-lm` (`MLXVLM` / `VLMModelFactory`) for inference — loads any MLX-format model from HuggingFace
+- Uses `mlx-swift-lm` for inference — `VLMModelFactory` for vision models and `LLMModelFactory` for text-only models
 - **Offline-first**: `LocalModelResolver` checks both the sandboxed app container and `~/.cache/huggingface/hub/` for locally-cached models before downloading
 - **No duplicate storage**: custom `HubApi` with blob cache disabled — models are stored once in the snapshot cache
 - **KV cache reuse** across API requests — reuses `ChatSession` when conversation history prefix matches
