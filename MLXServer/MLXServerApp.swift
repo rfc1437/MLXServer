@@ -23,6 +23,9 @@ struct MLXServerApp: App {
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 700)
+        .commands {
+            SaveChatCommands()
+        }
 
         #if os(macOS)
         Settings {

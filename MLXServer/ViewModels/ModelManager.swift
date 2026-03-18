@@ -12,7 +12,12 @@ final class ModelManager {
     /// HubApi with blob cache disabled to avoid storing every model twice.
     /// swift-huggingface defaults to caching in both huggingface/hub/ (snapshots)
     /// AND models/ (content-addressed blobs). We only need the snapshots.
-    private static let hub = HubApi(cache: nil)
+    /// Must use the same downloadBase as defaultHubApi (.cachesDirectory) so
+    /// LocalModelResolver can find downloaded models.
+    private static let hub: HubApi = {
+        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        return HubApi(downloadBase: cachesDir, cache: nil)
+    }()
     var currentModel: ModelConfig?
     var modelContainer: ModelContainer?
     var isLoading = false
@@ -52,7 +57,6 @@ final class ModelManager {
         }
 
         do {
-            let container: ModelContainer
             let progressHandler: @Sendable (Progress) -> Void = { progress in
                 Task { @MainActor in
                     self.downloadProgress = progress.fractionCompleted
@@ -73,7 +77,7 @@ final class ModelManager {
                 configuration = config.modelConfiguration
             }
 
-            container = try await VLMModelFactory.shared.loadContainer(
+            let container = try await VLMModelFactory.shared.loadContainer(
                 hub: Self.hub,
                 configuration: configuration,
                 progressHandler: progressHandler

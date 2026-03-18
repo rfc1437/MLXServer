@@ -1,10 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(ModelManager.self) private var modelManager
     @State private var chatVM: ChatViewModel?
     @State private var showLoadError = false
     @State private var showMonitor = false
+    @State private var isExporting = false
 
     var body: some View {
         mainContent
@@ -51,6 +53,21 @@ struct ContentView: View {
             // Cmd+1/2/3 model switching
             .background {
                 modelSwitchShortcuts
+            }
+            // Expose export trigger to menu bar command
+            .focusedSceneValue(\.exportTrigger, $isExporting)
+            .fileExporter(
+                isPresented: $isExporting,
+                document: ChatExportDocument(
+                    messages: chatVM?.conversation.messages ?? [],
+                    modelName: modelManager.currentModel?.displayName
+                ),
+                contentTypes: ChatExportDocument.writableContentTypes,
+                defaultFilename: "chat"
+            ) { result in
+                if case .failure(let error) = result {
+                    print("[Export] Failed: \(error.localizedDescription)")
+                }
             }
     }
 
