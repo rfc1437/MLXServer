@@ -1,8 +1,18 @@
 import SwiftUI
 import MLX
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Task { @MainActor in
+            ChatDocumentController.shared.enqueueOpenRequests(urls)
+        }
+    }
+}
+
 @main
 struct MLXServerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var documentController = ChatDocumentController.shared
     @State private var modelManager = ModelManager()
     @State private var sceneStore = SceneStore()
 
@@ -13,9 +23,11 @@ struct MLXServerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(documentController)
                 .environment(modelManager)
                 .environment(sceneStore)
                 .task {
+                    guard !documentController.hasPendingOpenRequests else { return }
                     // Auto-load: configured default → last used → built-in default
                     let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
                     if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {

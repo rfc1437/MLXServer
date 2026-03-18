@@ -11,10 +11,12 @@
 		07119250A7F9D6ECE7F6B8FD /* SceneCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F03A123A8908714A89315FE /* SceneCommands.swift */; };
 		165E8AB6ADAE1D59B1A86420 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145B888FBDD4F931512C5473 /* Preferences.swift */; };
 		189362AAE2CDE5D4B3428334 /* ToolCallParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = E73B165A1822729C907791AE /* ToolCallParser.swift */; };
+		1A8833E3CCD3289C95E282A2 /* ChatDocumentManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1607BDDE53C575627DCC6896 /* ChatDocumentManifest.swift */; };
 		20FFB5DBF75AA6C359AAE31C /* SceneManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FEB592E5E717F817B03151 /* SceneManagementView.swift */; };
 		29879D696584B96CC56560DF /* ChatExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7C9BAD674E29688ACE53B0B /* ChatExporter.swift */; };
 		2CAAF7129F7CC45200FA9F6B /* ModelPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3C3A76C02AF70A9D8F868FC /* ModelPickerView.swift */; };
 		2D08769282BD71C170DB0943 /* InferenceStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = E35452B166893B25E765FF70 /* InferenceStats.swift */; };
+		2E3A02DF9C6A5109E532D5E2 /* ChatDocumentController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C1FCEFEA72B9ABB87FB20E /* ChatDocumentController.swift */; };
 		4158FA884D981D73288FB74C /* SaveChatCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2FCA55CEBEBCED78D9479A /* SaveChatCommands.swift */; };
 		4CB13DC1AC7A500DDBB443EC /* ChatInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E6AD02CDF23BDAB64700A7 /* ChatInputView.swift */; };
 		4DC033E45880B2948B47DEB1 /* FocusedValues.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF518FEBF3A38E830E3CE1A5 /* FocusedValues.swift */; };
@@ -29,10 +31,12 @@
 		84D32315B418B5243E017350 /* ToolPromptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16AE82A64D1D07AE3CD8D33A /* ToolPromptBuilder.swift */; };
 		85FB1EB49D76A9F21E181346 /* ChatScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = C04EE8E6418EC6E9B66999B0 /* ChatScene.swift */; };
 		945474365D0B3E961811909A /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = D5E8E1C2DD8D8AABB4306193 /* MLXVLM */; };
+		B13FFE238613BFBFC72E0CC8 /* ChatDocumentMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E29065DD29C17D20B0400D /* ChatDocumentMigration.swift */; };
 		B1D9BC407DB7DB1489230C20 /* MonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4239CFF94B819C35A8D4D617 /* MonitorView.swift */; };
 		B5AA6E3B4BE21676226B342B /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8BD93859F0291F1A3E09DA5 /* ChatViewModel.swift */; };
 		B6D3662995B885C102876B4A /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 9090667D4134056AE66DC2F1 /* MLXLMCommon */; };
 		C07A377244DCD67F4FE709FE /* DownloadModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DC8C86D397B1FCA08E07CBD /* DownloadModalView.swift */; };
+		C34F02550C584BB2547F0F6C /* ChatDocumentPackage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B3AA91D2C7842D7366F9A41 /* ChatDocumentPackage.swift */; };
 		CBA88529F8BE7BD0518994AD /* SceneSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B5ABDEB6F5C54856EB1A9E /* SceneSelectionView.swift */; };
 		CFEE79815DFB80E51FE3745A /* SceneStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C234359924C542F07ED926A2 /* SceneStore.swift */; };
 		D666A311788375E8A061C832 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4147321383E94E9F17A0154E /* SettingsView.swift */; };
@@ -46,15 +50,19 @@
 /* Begin PBXFileReference section */
 		0F03A123A8908714A89315FE /* SceneCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneCommands.swift; sourceTree = "<group>"; };
 		145B888FBDD4F931512C5473 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
+		1607BDDE53C575627DCC6896 /* ChatDocumentManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDocumentManifest.swift; sourceTree = "<group>"; };
 		16AE82A64D1D07AE3CD8D33A /* ToolPromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPromptBuilder.swift; sourceTree = "<group>"; };
+		24E29065DD29C17D20B0400D /* ChatDocumentMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDocumentMigration.swift; sourceTree = "<group>"; };
 		2DC8C86D397B1FCA08E07CBD /* DownloadModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadModalView.swift; sourceTree = "<group>"; };
 		2E2FCA55CEBEBCED78D9479A /* SaveChatCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveChatCommands.swift; sourceTree = "<group>"; };
 		37FEB592E5E717F817B03151 /* SceneManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneManagementView.swift; sourceTree = "<group>"; };
+		386CD08DC6338F42460DFBE2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		38DFC212AF4359A45FBE22BA /* ModelConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelConfig.swift; sourceTree = "<group>"; };
 		3AF462805202797F61422AEE /* MLXServer.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MLXServer.entitlements; sourceTree = "<group>"; };
 		3D08828E16B17EF02C14243E /* APIServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServer.swift; sourceTree = "<group>"; };
 		4147321383E94E9F17A0154E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		4239CFF94B819C35A8D4D617 /* MonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorView.swift; sourceTree = "<group>"; };
+		6B3AA91D2C7842D7366F9A41 /* ChatDocumentPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDocumentPackage.swift; sourceTree = "<group>"; };
 		6EE59189918D06B8D2F588FC /* MLXServer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MLXServer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		922CBDC9206737BD04AF2874 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
 		944C699FBB76C734C9DF2F2E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -68,6 +76,7 @@
 		C234359924C542F07ED926A2 /* SceneStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneStore.swift; sourceTree = "<group>"; };
 		C3C3A76C02AF70A9D8F868FC /* ModelPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPickerView.swift; sourceTree = "<group>"; };
 		C67742651DB486871CEF1612 /* MLXServerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXServerApp.swift; sourceTree = "<group>"; };
+		D5C1FCEFEA72B9ABB87FB20E /* ChatDocumentController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDocumentController.swift; sourceTree = "<group>"; };
 		D733A0D1D4AC25DDDA6C8684 /* LocalModelResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelResolver.swift; sourceTree = "<group>"; };
 		D7C9BAD674E29688ACE53B0B /* ChatExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatExporter.swift; sourceTree = "<group>"; };
 		DB1A5E8B1C9F2BC4D262C53A /* ChatMessagesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessagesView.swift; sourceTree = "<group>"; };
@@ -104,6 +113,17 @@
 			path = Utilities;
 			sourceTree = "<group>";
 		};
+		08DD6175C845EFB9638A0688 /* Documents */ = {
+			isa = PBXGroup;
+			children = (
+				D5C1FCEFEA72B9ABB87FB20E /* ChatDocumentController.swift */,
+				1607BDDE53C575627DCC6896 /* ChatDocumentManifest.swift */,
+				24E29065DD29C17D20B0400D /* ChatDocumentMigration.swift */,
+				6B3AA91D2C7842D7366F9A41 /* ChatDocumentPackage.swift */,
+			);
+			path = Documents;
+			sourceTree = "<group>";
+		};
 		652987C2A419DBFC79E32CDE /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -117,9 +137,11 @@
 			children = (
 				B629DA084A9A40E54F8EA5FA /* Assets.xcassets */,
 				944C699FBB76C734C9DF2F2E /* ContentView.swift */,
+				386CD08DC6338F42460DFBE2 /* Info.plist */,
 				3AF462805202797F61422AEE /* MLXServer.entitlements */,
 				C67742651DB486871CEF1612 /* MLXServerApp.swift */,
 				B459409ED6FD8797FDD81E94 /* Commands */,
+				08DD6175C845EFB9638A0688 /* Documents */,
 				BD0E350482D91238B4B59721 /* Models */,
 				E13C1AAA0C49D0ED85EFD94D /* Server */,
 				05B1BAE308E64D2FB2E73823 /* Utilities */,
@@ -273,6 +295,10 @@
 			files = (
 				D96DDE66F76FDDA642629E17 /* APIModels.swift in Sources */,
 				50DD129CCF2843482DEC3B96 /* APIServer.swift in Sources */,
+				2E3A02DF9C6A5109E532D5E2 /* ChatDocumentController.swift in Sources */,
+				1A8833E3CCD3289C95E282A2 /* ChatDocumentManifest.swift in Sources */,
+				B13FFE238613BFBFC72E0CC8 /* ChatDocumentMigration.swift in Sources */,
+				C34F02550C584BB2547F0F6C /* ChatDocumentPackage.swift in Sources */,
 				29879D696584B96CC56560DF /* ChatExporter.swift in Sources */,
 				4CB13DC1AC7A500DDBB443EC /* ChatInputView.swift in Sources */,
 				FAF7D4714AC6D02674920208 /* ChatMessage.swift in Sources */,
@@ -434,9 +460,8 @@
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MLXServer/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -459,9 +484,8 @@
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MLXServer/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

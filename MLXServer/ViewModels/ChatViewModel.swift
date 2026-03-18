@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import MLX
 import MLXLMCommon
@@ -12,13 +13,22 @@ final class ChatViewModel {
     var inputText = ""
     var attachedImages: [NSImage] = []
     var activeScene: ChatScene?
+    var currentDocumentURL: URL?
+    var hasUnsavedChanges = false
     var isGenerating = false
     var tokensPerSecond: Double = 0
     var promptTokens: Int = 0
     var generationTokens: Int = 0
 
+    private(set) var lastSavedSnapshotHash: String?
+
     private var generationTask: Task<Void, Never>?
     private var chatSession: ChatSession?
+    private var documentId = UUID()
+    private var documentCreatedAt = Date()
+    private var documentSystemPromptOverride: String?
+    private var documentThinkingOverride: Bool?
+    private var documentTemperature = 0.7
 
     let modelManager: ModelManager
     let apiServer = APIServer()
@@ -31,6 +41,14 @@ final class ChatViewModel {
         activeScene?.displayName ?? "Neutral"
     }
 
+    var documentDisplayName: String {
+        currentDocumentURL?.deletingPathExtension().lastPathComponent ?? "Untitled Chat"
+    }
+
+    var windowTitle: String {
+        hasUnsavedChanges ? "\(documentDisplayName) *" : documentDisplayName
+    }
+
     /// Ensure a ChatSession exists for the current model.
     private func ensureSession() {
         guard let container = modelManager.modelContainer else { return }
@@ -38,19 +56,35 @@ final class ChatViewModel {
             let systemPrompt = effectiveSystemPrompt
             // Pass enable_thinking to the Jinja chat template context.
             // Qwen3.5 and similar models use this to control reasoning mode.
-            let thinkingContext: [String: any Sendable]? = Preferences.enableThinking
+            let thinkingContext: [String: any Sendable]? = effectiveThinkingEnabled
                 ? nil
                 : ["enable_thinking": false]
-            chatSession = ChatSession(
-                container,
-                instructions: systemPrompt.isEmpty ? nil : systemPrompt,
-                generateParameters: GenerateParameters(temperature: 0.7),
-                additionalContext: thinkingContext
-            )
+            let generateParameters = GenerateParameters(temperature: Float(documentTemperature))
+            let history = conversation.messages.compactMap(historyMessage(from:))
+            if history.isEmpty {
+                chatSession = ChatSession(
+                    container,
+                    instructions: systemPrompt.isEmpty ? nil : systemPrompt,
+                    generateParameters: generateParameters,
+                    additionalContext: thinkingContext
+                )
+            } else {
+                chatSession = ChatSession(
+                    container,
+                    instructions: systemPrompt.isEmpty ? nil : systemPrompt,
+                    history: history,
+                    generateParameters: generateParameters,
+                    additionalContext: thinkingContext
+                )
+            }
         }
     }
 
     private var effectiveSystemPrompt: String {
+        if let documentSystemPromptOverride {
+            return documentSystemPromptOverride
+        }
+
         let parts = [
             Preferences.systemPrompt,
             activeScene?.systemPrompt ?? ""
@@ -59,6 +93,10 @@ final class ChatViewModel {
         .filter { !$0.isEmpty }
 
         return parts.joined(separator: "\n\n")
+    }
+
+    private var effectiveThinkingEnabled: Bool {
+        documentThinkingOverride ?? Preferences.enableThinking
     }
 
     func send() {
@@ -74,6 +112,7 @@ final class ChatViewModel {
         attachedImages = []
 
         conversation.addUserMessage(text, images: images)
+        markDirtyIfNeeded()
         let assistantIndex = conversation.addAssistantMessage()
 
         isGenerating = true
@@ -133,6 +172,7 @@ final class ChatViewModel {
             }
 
             conversation.finalizeMessage(at: assistantIndex)
+            markDirtyIfNeeded()
             isGenerating = false
             generationTask = nil
             modelManager.touchActivity()
@@ -147,6 +187,7 @@ final class ChatViewModel {
         if let last = conversation.messages.indices.last,
            conversation.messages[last].isStreaming {
             conversation.finalizeMessage(at: last)
+            markDirtyIfNeeded()
         }
     }
 
@@ -164,8 +205,10 @@ final class ChatViewModel {
         stop()
         conversation.clear()
         inputText = ""
+        attachedImages = []
         activeScene = nil
         resetSession()
+        resetDocumentState()
         Preferences.lastSceneId = nil
     }
 
@@ -182,7 +225,10 @@ final class ChatViewModel {
         inputText = scene?.starterPrompt.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         attachedImages = []
         resetSession()
+        resetDocumentState()
         Preferences.lastSceneId = scene?.id
+
+        markDirtyIfNeeded()
 
         if !inputText.isEmpty {
             send()
@@ -199,6 +245,210 @@ final class ChatViewModel {
         if modelManager.currentModel?.supportsImages != true {
             attachedImages = []
         }
+    }
+
+    func loadDocument(from url: URL) async throws {
+        let package = try ChatDocumentPackage(contentsOf: url)
+        let restoredMessages = try package.manifest.messages.map { storedMessage in
+            try restoreMessage(storedMessage, attachmentContents: package.attachmentContents)
+        }
+
+        stop()
+        conversation.replaceMessages(restoredMessages)
+        inputText = package.manifest.uiState.draftInput
+        attachedImages = []
+        activeScene = nil
+        currentDocumentURL = url
+        documentId = package.manifest.documentId
+        documentCreatedAt = package.manifest.createdAt
+        documentSystemPromptOverride = package.manifest.settings.systemPrompt
+        documentThinkingOverride = package.manifest.settings.thinkingEnabled
+        documentTemperature = package.manifest.settings.temperature
+        resetSession()
+        lastSavedSnapshotHash = try snapshotHash()
+        hasUnsavedChanges = false
+        Preferences.lastSceneId = nil
+
+        if let storedModel = package.manifest.model,
+           let config = ModelConfig.resolve(storedModel.id) ?? ModelConfig.resolve(storedModel.repoId),
+           modelManager.currentModel?.id != config.id {
+            await modelManager.loadModel(config)
+        }
+    }
+
+    func saveDocument(to url: URL) throws {
+        guard !isGenerating else {
+            throw ChatDocumentError.saveWhileGenerating
+        }
+
+        let package = try makeDocumentPackage(updatedAt: Date())
+        try package.write(to: url)
+        currentDocumentURL = url
+        lastSavedSnapshotHash = try snapshotHash()
+        hasUnsavedChanges = false
+    }
+
+    func markDirtyIfNeeded() {
+        if let lastSavedSnapshotHash {
+            hasUnsavedChanges = (try? snapshotHash()) != lastSavedSnapshotHash
+        } else {
+            hasUnsavedChanges = !conversation.messages.isEmpty
+                || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || activeScene != nil
+        }
+    }
+
+    private func resetDocumentState() {
+        currentDocumentURL = nil
+        hasUnsavedChanges = false
+        lastSavedSnapshotHash = nil
+        documentId = UUID()
+        documentCreatedAt = Date()
+        documentSystemPromptOverride = nil
+        documentThinkingOverride = nil
+        documentTemperature = 0.7
+    }
+
+    private func restoreMessage(
+        _ storedMessage: ChatDocumentManifest.StoredChatMessage,
+        attachmentContents: [String: Data]
+    ) throws -> ChatMessage {
+        let attachments = try storedMessage.attachments.map { attachment in
+            guard let data = attachmentContents[attachment.relativePath] else {
+                throw ChatDocumentError.missingAttachment(attachment.relativePath)
+            }
+            guard let restoredAttachment = ChatAttachment(
+                id: attachment.id,
+                data: data,
+                mimeType: attachment.mimeType,
+                pixelWidth: attachment.pixelWidth,
+                pixelHeight: attachment.pixelHeight,
+                sha256: attachment.sha256
+            ) else {
+                throw ChatDocumentError.invalidAttachmentData(attachment.relativePath)
+            }
+            return restoredAttachment
+        }
+
+        return ChatMessage(
+            id: storedMessage.id,
+            role: ChatMessage.Role(rawValue: storedMessage.role.rawValue) ?? .assistant,
+            content: storedMessage.content,
+            attachments: attachments,
+            isStreaming: storedMessage.streamingState == .streaming,
+            timestamp: storedMessage.createdAt,
+            rawContent: storedMessage.rawContent,
+            thinkingContent: storedMessage.thinkingContent,
+            isThinking: storedMessage.streamingState == .streaming
+        )
+    }
+
+    private func makeDocumentPackage(updatedAt: Date) throws -> ChatDocumentPackage {
+        let manifest = makeManifest(updatedAt: updatedAt)
+        var attachmentContents: [String: Data] = [:]
+
+        for message in conversation.messages {
+            for attachment in message.attachments {
+                attachmentContents[attachmentRelativePath(for: attachment)] = attachment.data
+            }
+        }
+
+        return ChatDocumentPackage(manifest: manifest, attachmentContents: attachmentContents)
+    }
+
+    private func makeManifest(updatedAt: Date) -> ChatDocumentManifest {
+        let messages = conversation.messages.map { message in
+            ChatDocumentManifest.StoredChatMessage(
+                id: message.id,
+                role: ChatDocumentManifest.StoredChatMessage.Role(rawValue: message.role.rawValue) ?? .assistant,
+                createdAt: message.timestamp,
+                content: message.content,
+                rawContent: message.rawContent,
+                thinkingContent: message.thinkingContent,
+                streamingState: message.isStreaming ? .streaming : .completed,
+                attachments: message.attachments.map { attachment in
+                    ChatDocumentManifest.StoredAttachment(
+                        id: attachment.id,
+                        type: "image",
+                        relativePath: attachmentRelativePath(for: attachment),
+                        mimeType: attachment.mimeType,
+                        pixelWidth: attachment.pixelWidth,
+                        pixelHeight: attachment.pixelHeight,
+                        sha256: attachment.sha256
+                    )
+                }
+            )
+        }
+
+        return ChatDocumentManifest(
+            schemaVersion: ChatDocumentManifest.currentSchemaVersion,
+            documentId: documentId,
+            createdAt: documentCreatedAt,
+            updatedAt: updatedAt,
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0",
+            model: currentStoredModelInfo,
+            settings: .init(
+                systemPrompt: effectiveSystemPrompt,
+                thinkingEnabled: effectiveThinkingEnabled,
+                temperature: documentTemperature
+            ),
+            messages: messages,
+            uiState: .init(
+                draftInput: inputText,
+                scrollAnchorMessageId: conversation.messages.last?.id
+            )
+        )
+    }
+
+    private var currentStoredModelInfo: ChatDocumentManifest.StoredModelInfo? {
+        guard let model = modelManager.currentModel else { return nil }
+        return .init(id: model.id, displayName: model.displayName, repoId: model.repoId)
+    }
+
+    private func attachmentRelativePath(for attachment: ChatAttachment) -> String {
+        "attachments/\(attachment.id.uuidString).\(attachment.fileExtension)"
+    }
+
+    private func historyMessage(from message: ChatMessage) -> Chat.Message? {
+        let role: Chat.Message.Role
+        switch message.role {
+        case .assistant:
+            role = .assistant
+        case .system:
+            return nil
+        case .user:
+            role = .user
+        }
+
+        return Chat.Message(
+            role: role,
+            content: message.sessionContent,
+            images: message.attachments.compactMap(\.userInputImage)
+        )
+    }
+
+    private func snapshotHash() throws -> String {
+        let snapshot = ChatDocumentSnapshot(
+            documentId: documentId,
+            createdAt: documentCreatedAt,
+            model: currentStoredModelInfo,
+            settings: .init(
+                systemPrompt: effectiveSystemPrompt,
+                thinkingEnabled: effectiveThinkingEnabled,
+                temperature: documentTemperature
+            ),
+            messages: makeManifest(updatedAt: documentCreatedAt).messages,
+            uiState: .init(draftInput: inputText, scrollAnchorMessageId: conversation.messages.last?.id)
+        )
+        let data = try Self.snapshotEncoder.encode(snapshot)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static var snapshotEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
     }
 
     // MARK: - API Server

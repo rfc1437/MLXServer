@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    @Environment(ChatDocumentController.self) private var documentController
     @Environment(ModelManager.self) private var modelManager
     @Environment(\.openWindow) private var openWindow
     @Environment(SceneStore.self) private var sceneStore
@@ -10,11 +12,16 @@ struct ContentView: View {
     @State private var showMonitor = false
     @State private var showScenePicker = false
     @State private var exportDocument: ChatExportDocument?
+    @State private var documentErrorMessage: String?
     @State private var exportErrorMessage: String?
 
     var body: some View {
-        mainContent
-            .navigationTitle(modelManager.currentModel?.displayName ?? "MLX Server")
+        exportedContent
+    }
+
+    private var lifecycleContent: some View {
+        AnyView(mainContent)
+            .navigationTitle(navigationTitleText)
             .onAppear {
                 if chatVM == nil {
                     chatVM = ChatViewModel(modelManager: modelManager)
@@ -23,17 +30,30 @@ struct ContentView: View {
                         chatVM?.startAPIServer()
                     }
                 }
+
+                processPendingOpenRequests()
             }
             .onChange(of: modelManager.currentModel) {
                 chatVM?.handleModelChange()
+                chatVM?.markDirtyIfNeeded()
                 // Persist last used model
                 if let id = modelManager.currentModel?.id {
                     Preferences.lastModelId = id
                 }
             }
+            .onChange(of: chatVM?.inputText ?? "") {
+                chatVM?.markDirtyIfNeeded()
+            }
             .onChange(of: modelManager.errorMessage) {
                 showLoadError = modelManager.errorMessage != nil
             }
+            .onChange(of: documentController.openRequestNonce) {
+                processPendingOpenRequests()
+            }
+    }
+
+    private var alertContent: some View {
+        AnyView(lifecycleContent)
             .alert("Model Error", isPresented: $showLoadError) {
                 Button("Retry") {
                     if let config = modelManager.currentModel ?? ModelConfig.availableModels.first {
@@ -46,6 +66,13 @@ struct ContentView: View {
             } message: {
                 Text(modelManager.errorMessage ?? "Unknown error loading model.")
             }
+            .alert("Document Error", isPresented: documentErrorBinding) {
+                Button("OK", role: .cancel) {
+                    documentErrorMessage = nil
+                }
+            } message: {
+                Text(documentErrorMessage ?? "Unknown document error.")
+            }
             .alert("Export Failed", isPresented: exportErrorBinding) {
                 Button("OK", role: .cancel) {
                     exportErrorMessage = nil
@@ -53,6 +80,10 @@ struct ContentView: View {
             } message: {
                 Text(exportErrorMessage ?? "Unknown export error.")
             }
+    }
+
+    private var exportedContent: some View {
+        AnyView(alertContent)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     ModelPickerView()
@@ -65,6 +96,11 @@ struct ContentView: View {
             .background {
                 modelSwitchShortcuts
             }
+            .focusedSceneValue(\.newChatAction, NewChatAction(perform: beginNewChat))
+            .focusedSceneValue(\.openChatAction, OpenChatAction(perform: beginOpenDocument))
+            .focusedSceneValue(\.saveChatAction, SaveChatAction(perform: saveCurrentDocument))
+            .focusedSceneValue(\.saveChatAsAction, SaveChatAsAction(perform: saveCurrentDocumentAs))
+            .focusedSceneValue(\.revertChatAction, RevertChatAction(perform: beginRevertToSaved))
             .focusedSceneValue(\.exportChatAction, ExportChatAction(perform: beginExport))
             .fileExporter(
                 isPresented: Binding(
@@ -85,6 +121,13 @@ struct ContentView: View {
                     exportErrorMessage = error.localizedDescription
                 }
             }
+    }
+
+    private var navigationTitleText: String {
+        if let title = chatVM?.windowTitle {
+            return title
+        }
+        return modelManager.currentModel?.displayName ?? "MLX Server"
     }
 
     @ViewBuilder
@@ -145,7 +188,7 @@ struct ContentView: View {
 
         // New conversation
         Button {
-            showScenePicker = true
+            beginNewChat()
         } label: {
             Label("New Chat", systemImage: "plus.message")
         }
@@ -157,11 +200,11 @@ struct ContentView: View {
                 currentModelName: modelManager.currentModel?.displayName,
                 onSelectNeutral: {
                     showScenePicker = false
-                    Task { await chatVM?.startNewConversation(scene: nil) }
+                    startConversation(scene: nil)
                 },
                 onSelectScene: { scene in
                     showScenePicker = false
-                    Task { await chatVM?.startNewConversation(scene: scene) }
+                    startConversation(scene: scene)
                 },
                 onManageScenes: {
                     showScenePicker = false
@@ -196,6 +239,10 @@ struct ContentView: View {
     }
 
     private var exportDefaultFilename: String {
+        if let currentDocumentURL = chatVM?.currentDocumentURL {
+            return currentDocumentURL.deletingPathExtension().lastPathComponent
+        }
+
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd-HHmm"
         return "chat-\(formatter.string(from: .now))"
@@ -207,6 +254,145 @@ struct ContentView: View {
             messages: chatVM?.conversation.messages ?? [],
             modelName: modelManager.currentModel?.displayName
         )
+    }
+
+    private var documentDefaultFilename: String {
+        if let currentDocumentURL = chatVM?.currentDocumentURL {
+            return currentDocumentURL.deletingPathExtension().lastPathComponent
+        }
+        return exportDefaultFilename
+    }
+
+    private var documentErrorBinding: Binding<Bool> {
+        Binding(
+            get: { documentErrorMessage != nil },
+            set: {
+                if !$0 {
+                    documentErrorMessage = nil
+                }
+            }
+        )
+    }
+
+    private func beginNewChat() {
+        showScenePicker = true
+    }
+
+    private func startConversation(scene: ChatScene?) {
+        guard confirmDiscardUnsavedChanges(
+            title: "Discard Unsaved Changes?",
+            message: "Starting a new chat will replace the current conversation."
+        ) else {
+            return
+        }
+
+        Task {
+            await chatVM?.startNewConversation(scene: scene)
+        }
+    }
+
+    private func beginOpenDocument() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.mlxChatDocument]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.treatsFilePackagesAsDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            await openDocument(at: url)
+        }
+    }
+
+    private func saveCurrentDocument() {
+        guard let chatVM else { return }
+
+        if let currentDocumentURL = chatVM.currentDocumentURL {
+            do {
+                try chatVM.saveDocument(to: currentDocumentURL)
+            } catch {
+                documentErrorMessage = error.localizedDescription
+            }
+        } else {
+            saveCurrentDocumentAs()
+        }
+    }
+
+    private func saveCurrentDocumentAs() {
+        guard let chatVM else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.mlxChatDocument]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.nameFieldStringValue = documentDefaultFilename
+
+        guard panel.runModal() == .OK, let panelURL = panel.url else { return }
+
+        let saveURL: URL
+        if panelURL.pathExtension.lowercased() == "mlxchat" {
+            saveURL = panelURL
+        } else {
+            saveURL = panelURL.appendingPathExtension("mlxchat")
+        }
+
+        do {
+            try chatVM.saveDocument(to: saveURL)
+        } catch {
+            documentErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func beginRevertToSaved() {
+        guard let currentDocumentURL = chatVM?.currentDocumentURL else { return }
+        guard confirmDiscardUnsavedChanges(
+            title: "Revert To Saved Version?",
+            message: "All unsaved changes in the current chat will be lost."
+        ) else {
+            return
+        }
+
+        Task {
+            await openDocument(at: currentDocumentURL, skipUnsavedCheck: true)
+        }
+    }
+
+    private func processPendingOpenRequests() {
+        guard chatVM != nil else { return }
+
+        Task {
+            while let url = documentController.consumeNextOpenRequest() {
+                await openDocument(at: url)
+            }
+        }
+    }
+
+    private func openDocument(at url: URL, skipUnsavedCheck: Bool = false) async {
+        if !skipUnsavedCheck {
+            let shouldContinue = confirmDiscardUnsavedChanges(
+                title: "Discard Unsaved Changes?",
+                message: "Opening another chat will replace the current conversation."
+            )
+            guard shouldContinue else { return }
+        }
+
+        do {
+            try await chatVM?.loadDocument(from: url)
+        } catch {
+            documentErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func confirmDiscardUnsavedChanges(title: String, message: String) -> Bool {
+        guard chatVM?.hasUnsavedChanges == true else { return true }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "Discard Changes")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
 

@@ -28,9 +28,8 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "15.0"
-        GENERATE_INFOPLIST_FILE: "YES"
-        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
-        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: MLXServer/Info.plist
         CODE_SIGN_ENTITLEMENTS: MLXServer/MLXServer.entitlements
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: "YES"

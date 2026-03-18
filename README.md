@@ -32,9 +32,10 @@ open "build/Debug/MLX Server.app"
 - **Download progress modal** — shows file progress, percentage, and speed when downloading a new model
 - **Thinking mode** — models like Qwen3.5 can reason internally before responding; thinking content appears in a collapsible box. Toggle on/off in Settings.
 - **Streaming responses** with live token display
-- **Export chat** — File > Export Chat (Cmd+Shift+S) saves conversations as Markdown or RTF (Pages-compatible)
+- **Native chat documents** — save chats as `.mlxchat` package documents, reopen them from File > Open Chat or by double-clicking them in Finder, and continue the conversation with restored model context, thinking blocks, and images
+- **Export chat** — File > Export Chat (Cmd+Shift+E) saves conversations as Markdown or RTF (Pages-compatible)
 - **Status bar** showing model name, context window, tokens/sec, token counts, GPU memory, API server status
-- **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3/4` (switch models), `Cmd+Shift+S` (export)
+- **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+O` (open chat document), `Cmd+S` (save chat document), `Cmd+Shift+S` (save chat document as), `Cmd+Shift+E` (export), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3/4` (switch models)
 - **Scene management** — create and edit reusable roleplay/task presets from the New Chat flow or Settings
 - **Settings** (`Cmd+,`): default model, thinking mode toggle, base system prompt, scene management, API port, API auto-start, idle unload timeout
 - **Idle auto-unload** — model is unloaded after configurable idle time (resets on both user input and model output), reloaded on next request
@@ -109,7 +110,12 @@ MLXServer/
 │   ├── MonitorView.swift           — Inference statistics monitor
 │   └── SettingsView.swift          — System prompt, thinking mode, API, idle settings
 ├── Commands/
-│   └── SaveChatCommands.swift      — File menu export command
+│   └── SaveChatCommands.swift      — File menu new/open/save/revert/export commands
+├── Documents/
+│   ├── ChatDocumentController.swift — Queues Finder/app open-document requests into SwiftUI
+│   ├── ChatDocumentManifest.swift   — Versioned `.mlxchat` manifest schema
+│   ├── ChatDocumentMigration.swift  — Manifest schema migration entry point
+│   └── ChatDocumentPackage.swift    — Package document read/write for `.mlxchat`
 ├── Server/
 │   ├── APIServer.swift             — NWListener HTTP server, SSE streaming, KV cache reuse
 │   ├── APIModels.swift             — OpenAI-compatible Codable structs

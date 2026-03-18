@@ -65,14 +65,16 @@ struct MessageBubbleView: View {
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
                 // Show attached images
-                if !message.images.isEmpty {
+                if !message.attachments.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(Array(message.images.enumerated()), id: \.offset) { _, image in
-                            Image(nsImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 80, height: 80)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        ForEach(message.attachments) { attachment in
+                            if let image = attachment.image {
+                                Image(nsImage: image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 80, height: 80)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
                         }
                     }
                 }
