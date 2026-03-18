@@ -3,12 +3,16 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A FileDocument that exports a chat conversation as Markdown or RTF.
-struct ChatExportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.plainText] }
-    static var writableContentTypes: [UTType] {
-        [UTType(filenameExtension: "md") ?? .plainText, .rtf]
+extension UTType {
+    static var markdownText: UTType {
+        UTType(filenameExtension: "md") ?? .plainText
     }
+}
+
+/// FileDocument for exporting chat as Markdown (.md) or RTF.
+struct ChatExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.rtf, .markdownText] }
+    static var writableContentTypes: [UTType] { [.rtf, .markdownText] }
 
     let messages: [ChatMessage]
     let modelName: String?
@@ -24,14 +28,15 @@ struct ChatExportDocument: FileDocument {
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        let contentType = configuration.contentType
-
-        if contentType == .rtf, let data = ChatExporter.exportRTF(messages: messages, modelName: modelName) {
+        if configuration.contentType == .rtf {
+            guard let data = ChatExporter.exportRTF(messages: messages, modelName: modelName) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
             return FileWrapper(regularFileWithContents: data)
-        } else {
-            let md = ChatExporter.exportMarkdown(messages: messages, modelName: modelName)
-            return FileWrapper(regularFileWithContents: Data(md.utf8))
         }
+
+        let md = ChatExporter.exportMarkdown(messages: messages, modelName: modelName)
+        return FileWrapper(regularFileWithContents: Data(md.utf8))
     }
 }
 

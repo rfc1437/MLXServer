@@ -1,13 +1,21 @@
 import SwiftUI
 
+struct ExportChatAction {
+    let perform: () -> Void
+
+    func callAsFunction() {
+        perform()
+    }
+}
+
 /// Focused value key for triggering chat export from the menu bar.
-struct FocusedExportTriggerKey: FocusedValueKey {
-    typealias Value = Binding<Bool>
+struct FocusedExportActionKey: FocusedValueKey {
+    typealias Value = ExportChatAction
 }
 
 extension FocusedValues {
-    var exportTrigger: Binding<Bool>? {
-        get { self[FocusedExportTriggerKey.self] }
-        set { self[FocusedExportTriggerKey.self] = newValue }
+    var exportChatAction: ExportChatAction? {
+        get { self[FocusedExportActionKey.self] }
+        set { self[FocusedExportActionKey.self] = newValue }
     }
 }

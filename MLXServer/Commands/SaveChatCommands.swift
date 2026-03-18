@@ -2,15 +2,15 @@ import SwiftUI
 
 /// Adds "Export Chat…" to the File menu.
 struct SaveChatCommands: Commands {
-    @FocusedBinding(\.exportTrigger) var isExporting
+    @FocusedValue(\.exportChatAction) private var exportChatAction
 
     var body: some Commands {
         CommandGroup(after: .saveItem) {
             Button("Export Chat…") {
-                isExporting = true
+                exportChatAction?()
             }
-            .keyboardShortcut("e", modifiers: [.command, .shift])
-            .disabled(isExporting == nil)
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+            .disabled(exportChatAction == nil)
         }
     }
 }

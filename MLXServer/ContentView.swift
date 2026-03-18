@@ -6,7 +6,8 @@ struct ContentView: View {
     @State private var chatVM: ChatViewModel?
     @State private var showLoadError = false
     @State private var showMonitor = false
-    @State private var isExporting = false
+    @State private var exportDocument: ChatExportDocument?
+    @State private var exportErrorMessage: String?
 
     var body: some View {
         mainContent
@@ -42,6 +43,13 @@ struct ContentView: View {
             } message: {
                 Text(modelManager.errorMessage ?? "Unknown error loading model.")
             }
+            .alert("Export Failed", isPresented: exportErrorBinding) {
+                Button("OK", role: .cancel) {
+                    exportErrorMessage = nil
+                }
+            } message: {
+                Text(exportErrorMessage ?? "Unknown export error.")
+            }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     ModelPickerView()
@@ -54,19 +62,24 @@ struct ContentView: View {
             .background {
                 modelSwitchShortcuts
             }
-            // Expose export trigger to menu bar command
-            .focusedSceneValue(\.exportTrigger, $isExporting)
+            .focusedSceneValue(\.exportChatAction, ExportChatAction(perform: beginExport))
             .fileExporter(
-                isPresented: $isExporting,
-                document: ChatExportDocument(
-                    messages: chatVM?.conversation.messages ?? [],
-                    modelName: modelManager.currentModel?.displayName
+                isPresented: Binding(
+                    get: { exportDocument != nil },
+                    set: {
+                        if !$0 {
+                            exportDocument = nil
+                        }
+                    }
                 ),
+                document: exportDocument,
                 contentTypes: ChatExportDocument.writableContentTypes,
-                defaultFilename: "chat"
+                defaultFilename: exportDefaultFilename
             ) { result in
+                exportDocument = nil
                 if case .failure(let error) = result {
                     print("[Export] Failed: \(error.localizedDescription)")
+                    exportErrorMessage = error.localizedDescription
                 }
             }
     }
@@ -147,6 +160,31 @@ struct ContentView: View {
                 .hidden()
             }
         }
+    }
+
+    private var exportErrorBinding: Binding<Bool> {
+        Binding(
+            get: { exportErrorMessage != nil },
+            set: {
+                if !$0 {
+                    exportErrorMessage = nil
+                }
+            }
+        )
+    }
+
+    private var exportDefaultFilename: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        return "chat-\(formatter.string(from: .now))"
+    }
+
+    private func beginExport() {
+        guard exportDocument == nil else { return }
+        exportDocument = ChatExportDocument(
+            messages: chatVM?.conversation.messages ?? [],
+            modelName: modelManager.currentModel?.displayName
+        )
     }
 }
 
