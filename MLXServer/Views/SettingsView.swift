@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(SceneStore.self) private var sceneStore
     @State private var systemPrompt: String = Preferences.systemPrompt
     @State private var apiPort: String = String(Preferences.apiPort)
     @State private var apiAutoStart: Bool = Preferences.apiAutoStart
@@ -47,6 +49,26 @@ struct SettingsView: View {
                 Text("Applied to new conversations. Leave empty for no system prompt.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Scenes") {
+                Button("Manage Scenes…") {
+                    openWindow(id: SceneManagementWindow.windowID)
+                }
+
+                Text("Create reusable roleplay or task presets with a dedicated model, extra system prompt, and an auto-sent opening message.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if sceneStore.scenes.isEmpty {
+                    Text("No saved scenes yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Saved scenes: \(sceneStore.scenes.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("API Server") {

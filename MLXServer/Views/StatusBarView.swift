@@ -27,6 +27,10 @@ struct StatusBarView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Label(viewModel.activeSceneName, systemImage: "theatermasks")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Spacer()
 
             // GPU memory

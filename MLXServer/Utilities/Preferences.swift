@@ -4,6 +4,9 @@ import Foundation
 enum Preferences {
     nonisolated(unsafe) private static let defaults = UserDefaults.standard
 
+    private static let jsonEncoder = JSONEncoder()
+    private static let jsonDecoder = JSONDecoder()
+
     // MARK: - Last used model
 
     private static let lastModelKey = "lastModelId"
@@ -29,6 +32,30 @@ enum Preferences {
     static var systemPrompt: String {
         get { defaults.string(forKey: systemPromptKey) ?? "" }
         set { defaults.set(newValue, forKey: systemPromptKey) }
+    }
+
+    // MARK: - Scenes
+
+    private static let scenesKey = "chatScenes"
+    private static let lastSceneIdKey = "lastSceneId"
+
+    static var scenes: [ChatScene] {
+        get {
+            guard let data = defaults.data(forKey: scenesKey) else { return [] }
+            return (try? jsonDecoder.decode([ChatScene].self, from: data)) ?? []
+        }
+        set {
+            guard let data = try? jsonEncoder.encode(newValue) else { return }
+            defaults.set(data, forKey: scenesKey)
+        }
+    }
+
+    static var lastSceneId: UUID? {
+        get {
+            guard let rawValue = defaults.string(forKey: lastSceneIdKey) else { return nil }
+            return UUID(uuidString: rawValue)
+        }
+        set { defaults.set(newValue?.uuidString, forKey: lastSceneIdKey) }
     }
 
     // MARK: - API server

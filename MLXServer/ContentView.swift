@@ -3,9 +3,12 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(ModelManager.self) private var modelManager
+    @Environment(\.openWindow) private var openWindow
+    @Environment(SceneStore.self) private var sceneStore
     @State private var chatVM: ChatViewModel?
     @State private var showLoadError = false
     @State private var showMonitor = false
+    @State private var showScenePicker = false
     @State private var exportDocument: ChatExportDocument?
     @State private var exportErrorMessage: String?
 
@@ -142,11 +145,30 @@ struct ContentView: View {
 
         // New conversation
         Button {
-            chatVM?.newConversation()
+            showScenePicker = true
         } label: {
             Label("New Chat", systemImage: "plus.message")
         }
         .keyboardShortcut("n", modifiers: .command)
+        .popover(isPresented: $showScenePicker, arrowEdge: .top) {
+            SceneSelectionView(
+                scenes: sceneStore.scenes,
+                activeSceneId: chatVM?.activeScene?.id,
+                currentModelName: modelManager.currentModel?.displayName,
+                onSelectNeutral: {
+                    showScenePicker = false
+                    Task { await chatVM?.startNewConversation(scene: nil) }
+                },
+                onSelectScene: { scene in
+                    showScenePicker = false
+                    Task { await chatVM?.startNewConversation(scene: scene) }
+                },
+                onManageScenes: {
+                    showScenePicker = false
+                    openWindow(id: SceneManagementWindow.windowID)
+                }
+            )
+        }
     }
 
     @ViewBuilder

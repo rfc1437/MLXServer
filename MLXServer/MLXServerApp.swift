@@ -4,6 +4,7 @@ import MLX
 @main
 struct MLXServerApp: App {
     @State private var modelManager = ModelManager()
+    @State private var sceneStore = SceneStore()
 
     init() {
         MLX.GPU.set(cacheLimit: 20 * 1024 * 1024)
@@ -13,6 +14,7 @@ struct MLXServerApp: App {
         WindowGroup {
             ContentView()
                 .environment(modelManager)
+                .environment(sceneStore)
                 .task {
                     // Auto-load: configured default → last used → built-in default
                     let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
@@ -25,11 +27,19 @@ struct MLXServerApp: App {
         .defaultSize(width: 800, height: 700)
         .commands {
             SaveChatCommands()
+            SceneCommands()
         }
+
+        Window("Scenes", id: SceneManagementWindow.windowID) {
+            SceneManagementView()
+                .environment(sceneStore)
+        }
+        .defaultSize(width: 900, height: 560)
 
         #if os(macOS)
         Settings {
             SettingsView()
+                .environment(sceneStore)
         }
         #endif
     }

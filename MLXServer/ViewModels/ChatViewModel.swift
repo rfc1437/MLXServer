@@ -11,6 +11,7 @@ final class ChatViewModel {
     var conversation = Conversation()
     var inputText = ""
     var attachedImages: [NSImage] = []
+    var activeScene: ChatScene?
     var isGenerating = false
     var tokensPerSecond: Double = 0
     var promptTokens: Int = 0
@@ -26,11 +27,15 @@ final class ChatViewModel {
         self.modelManager = modelManager
     }
 
+    var activeSceneName: String {
+        activeScene?.displayName ?? "Neutral"
+    }
+
     /// Ensure a ChatSession exists for the current model.
     private func ensureSession() {
         guard let container = modelManager.modelContainer else { return }
         if chatSession == nil {
-            let systemPrompt = Preferences.systemPrompt
+            let systemPrompt = effectiveSystemPrompt
             // Pass enable_thinking to the Jinja chat template context.
             // Qwen3.5 and similar models use this to control reasoning mode.
             let thinkingContext: [String: any Sendable]? = Preferences.enableThinking
@@ -43,6 +48,17 @@ final class ChatViewModel {
                 additionalContext: thinkingContext
             )
         }
+    }
+
+    private var effectiveSystemPrompt: String {
+        let parts = [
+            Preferences.systemPrompt,
+            activeScene?.systemPrompt ?? ""
+        ]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+        return parts.joined(separator: "\n\n")
     }
 
     func send() {
@@ -147,7 +163,30 @@ final class ChatViewModel {
     func newConversation() {
         stop()
         conversation.clear()
+        inputText = ""
+        activeScene = nil
         resetSession()
+        Preferences.lastSceneId = nil
+    }
+
+    func startNewConversation(scene: ChatScene?) async {
+        stop()
+
+        if let config = scene?.resolvedModel,
+           modelManager.currentModel?.id != config.id {
+            await modelManager.loadModel(config)
+        }
+
+        conversation.clear()
+        activeScene = scene
+        inputText = scene?.starterPrompt.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        attachedImages = []
+        resetSession()
+        Preferences.lastSceneId = scene?.id
+
+        if !inputText.isEmpty {
+            send()
+        }
     }
 
     /// Reset the chat session (e.g. on model switch or new conversation).
