@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ChatInputView: View {
     @Bindable var viewModel: ChatViewModel
+    @State private var pasteMonitor: Any?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -85,31 +86,96 @@ struct ChatInputView: View {
             .padding(.vertical, 10)
         }
         .padding(.top, 4)
-        .onDrop(of: [.image], isTargeted: nil) { providers in
+        .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
             for provider in providers {
-                _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
-                    if let image = image as? NSImage {
+                if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                    provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
+                        guard let urlData = data as? Data,
+                              let url = URL(dataRepresentation: urlData, relativeTo: nil),
+                              let image = NSImage(contentsOf: url) else { return }
                         Task { @MainActor in
                             viewModel.attachImage(image)
+                        }
+                    }
+                } else {
+                    _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
+                        if let image = image as? NSImage {
+                            Task { @MainActor in
+                                viewModel.attachImage(image)
+                            }
                         }
                     }
                 }
             }
             return true
         }
-        // Cmd+V paste for images
-        .onPasteCommand(of: [.image, .png, .jpeg, .tiff]) { providers in
-            for provider in providers {
-                _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
-                    if let image = image as? NSImage {
-                        Task { @MainActor in
-                            viewModel.attachImage(image)
-                        }
-                    }
+        .onAppear { installPasteMonitor() }
+        .onDisappear { removePasteMonitor() }
+    }
+
+    // MARK: - Paste monitor
+
+    /// Intercepts Cmd+V before the TextField to handle image file URLs from Finder.
+    /// If the pasteboard contains file URLs pointing to images, attaches them and
+    /// consumes the event. Otherwise lets the TextField handle normal text paste.
+    private func installPasteMonitor() {
+        guard pasteMonitor == nil else { return }
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Check for Cmd+V
+            guard event.modifierFlags.contains(.command),
+                  event.charactersIgnoringModifiers == "v" else {
+                return event
+            }
+
+            let pasteboard = NSPasteboard.general
+            let images = loadImagesFromPasteboard(pasteboard)
+            guard !images.isEmpty else { return event }
+
+            // Attach images and consume the event
+            Task { @MainActor in
+                for image in images {
+                    viewModel.attachImage(image)
+                }
+            }
+            return nil // consume the event
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let monitor = pasteMonitor {
+            NSEvent.removeMonitor(monitor)
+            pasteMonitor = nil
+        }
+    }
+
+    /// Tries to load images from the pasteboard.
+    /// Handles: Finder file copies (file URLs), screenshot clipboard data, image data from other apps.
+    private func loadImagesFromPasteboard(_ pasteboard: NSPasteboard) -> [NSImage] {
+        var images: [NSImage] = []
+
+        // 1. Check for file URLs (Finder copy)
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true,
+            .urlReadingContentsConformToTypes: [UTType.image.identifier],
+        ]) as? [URL] {
+            for url in urls {
+                if let image = NSImage(contentsOf: url) {
+                    images.append(image)
                 }
             }
         }
+
+        if !images.isEmpty { return images }
+
+        // 2. Check for direct image data (screenshots, copy from Preview, etc.)
+        if let image = NSImage(pasteboard: pasteboard) {
+            images.append(image)
+        }
+
+        return images
     }
+
+    // MARK: - File picker
 
     private func pickImage() {
         let panel = NSOpenPanel()
