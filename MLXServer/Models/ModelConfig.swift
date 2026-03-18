@@ -22,6 +22,12 @@ struct ModelConfig: Identifiable, Hashable {
             displayName: "Qwen3 VL 4B",
             contextLength: 256_000
         ),
+        ModelConfig(
+            id: "qwen3.5-9b",
+            repoId: "mlx-community/Qwen3.5-9B-4bit",
+            displayName: "Qwen3.5 9B",
+            contextLength: 256_000
+        ),
     ]
 
     static let `default` = availableModels[0]

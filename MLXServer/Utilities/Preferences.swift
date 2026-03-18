@@ -49,6 +49,17 @@ enum Preferences {
         set { defaults.set(newValue, forKey: apiAutoStartKey) }
     }
 
+    // MARK: - Thinking mode
+
+    private static let enableThinkingKey = "enableThinking"
+
+    /// Whether to enable thinking/reasoning mode for models that support it (e.g. Qwen3.5).
+    /// When disabled, the model skips internal reasoning and responds directly.
+    static var enableThinking: Bool {
+        get { defaults.object(forKey: enableThinkingKey) == nil ? true : defaults.bool(forKey: enableThinkingKey) }
+        set { defaults.set(newValue, forKey: enableThinkingKey) }
+    }
+
     // MARK: - Idle unload
 
     private static let idleUnloadMinutesKey = "idleUnloadMinutes"

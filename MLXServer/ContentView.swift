@@ -56,14 +56,23 @@ struct ContentView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        if let chatVM {
-            if showMonitor {
-                MonitorView(stats: chatVM.apiServer.inferenceStats)
+        ZStack {
+            if let chatVM {
+                if showMonitor {
+                    MonitorView(stats: chatVM.apiServer.inferenceStats)
+                } else {
+                    ChatView(viewModel: chatVM)
+                }
             } else {
-                ChatView(viewModel: chatVM)
+                ProgressView("Initializing…")
             }
-        } else {
-            ProgressView("Initializing…")
+
+            // Download modal overlay
+            if modelManager.isDownloading {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                DownloadModalView()
+            }
         }
     }
 

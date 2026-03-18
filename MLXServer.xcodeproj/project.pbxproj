@@ -26,6 +26,7 @@
 		B1D9BC407DB7DB1489230C20 /* MonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4239CFF94B819C35A8D4D617 /* MonitorView.swift */; };
 		B5AA6E3B4BE21676226B342B /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8BD93859F0291F1A3E09DA5 /* ChatViewModel.swift */; };
 		B6D3662995B885C102876B4A /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 9090667D4134056AE66DC2F1 /* MLXLMCommon */; };
+		C07A377244DCD67F4FE709FE /* DownloadModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DC8C86D397B1FCA08E07CBD /* DownloadModalView.swift */; };
 		D666A311788375E8A061C832 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4147321383E94E9F17A0154E /* SettingsView.swift */; };
 		D96DDE66F76FDDA642629E17 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A52E2C9964ADA9D841A89B /* APIModels.swift */; };
 		F546CE5955ED253D8A793D5E /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A98257123539E9E738213BFA /* MarkdownUI */; };
@@ -36,6 +37,7 @@
 /* Begin PBXFileReference section */
 		145B888FBDD4F931512C5473 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
 		16AE82A64D1D07AE3CD8D33A /* ToolPromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPromptBuilder.swift; sourceTree = "<group>"; };
+		2DC8C86D397B1FCA08E07CBD /* DownloadModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadModalView.swift; sourceTree = "<group>"; };
 		38DFC212AF4359A45FBE22BA /* ModelConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelConfig.swift; sourceTree = "<group>"; };
 		3AF462805202797F61422AEE /* MLXServer.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MLXServer.entitlements; sourceTree = "<group>"; };
 		3D08828E16B17EF02C14243E /* APIServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServer.swift; sourceTree = "<group>"; };
@@ -111,6 +113,7 @@
 			children = (
 				E5E6AD02CDF23BDAB64700A7 /* ChatInputView.swift */,
 				DB1A5E8B1C9F2BC4D262C53A /* ChatMessagesView.swift */,
+				2DC8C86D397B1FCA08E07CBD /* DownloadModalView.swift */,
 				C3C3A76C02AF70A9D8F868FC /* ModelPickerView.swift */,
 				4239CFF94B819C35A8D4D617 /* MonitorView.swift */,
 				4147321383E94E9F17A0154E /* SettingsView.swift */,
@@ -240,6 +243,7 @@
 				5C1E8FE1C521914CEF98D3AA /* ChatMessagesView.swift in Sources */,
 				B5AA6E3B4BE21676226B342B /* ChatViewModel.swift in Sources */,
 				5946258F1DE88CE904584E0B /* ContentView.swift in Sources */,
+				C07A377244DCD67F4FE709FE /* DownloadModalView.swift in Sources */,
 				2D08769282BD71C170DB0943 /* InferenceStats.swift in Sources */,
 				6828CCA8B78AB40906F87CAB /* LocalModelResolver.swift in Sources */,
 				50B6861FF8610B3ED4FFAD9D /* MLXServerApp.swift in Sources */,

@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var apiAutoStart: Bool = Preferences.apiAutoStart
     @State private var idleUnloadMinutes: String = String(Preferences.idleUnloadMinutes)
     @State private var defaultModelId: String = Preferences.defaultModelId ?? ModelConfig.default.id
+    @State private var enableThinking: Bool = Preferences.enableThinking
 
     var body: some View {
         Form {
@@ -20,6 +21,17 @@ struct SettingsView: View {
                 }
 
                 Text("The model to load automatically when the app starts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Generation") {
+                Toggle("Enable thinking mode", isOn: $enableThinking)
+                    .onChange(of: enableThinking) {
+                        Preferences.enableThinking = enableThinking
+                    }
+
+                Text("When enabled, models like Qwen3.5 reason internally before responding. Produces better answers but slower. Takes effect on the next conversation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -75,6 +87,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 450, height: 460)
+        .frame(width: 450, height: 550)
     }
 }

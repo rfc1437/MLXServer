@@ -57,6 +57,7 @@ struct ChatMessagesView: View {
 
 struct MessageBubbleView: View {
     let message: ChatMessage
+    @State private var showThinking = false
 
     var body: some View {
         HStack {
@@ -76,11 +77,16 @@ struct MessageBubbleView: View {
                     }
                 }
 
+                // Thinking block (collapsible)
+                if !message.thinkingContent.isEmpty || message.isThinking {
+                    thinkingView
+                }
+
                 // Message content
-                if !message.content.isEmpty || message.isStreaming {
+                if !message.content.isEmpty || (message.isStreaming && !message.isThinking) {
                     Group {
                         if message.role == .assistant {
-                            Markdown(message.content + (message.isStreaming ? " ●" : ""))
+                            Markdown(message.content + (message.isStreaming && !message.isThinking ? " ●" : ""))
                                 .textSelection(.enabled)
                         } else {
                             Text(message.content)
@@ -100,5 +106,44 @@ struct MessageBubbleView: View {
 
             if message.role == .assistant { Spacer(minLength: 60) }
         }
+    }
+
+    private var thinkingView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    showThinking.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: showThinking ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                    if message.isThinking {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Thinking…")
+                    } else {
+                        Image(systemName: "brain")
+                        Text("Thought")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if showThinking {
+                Text(message.thinkingContent + (message.isThinking ? " ●" : ""))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+                    .padding(.top, 4)
+                    .padding(.leading, 14)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.purple.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

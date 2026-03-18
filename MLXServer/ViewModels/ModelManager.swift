@@ -1,4 +1,5 @@
 import Foundation
+import Hub
 import MLX
 import MLXLMCommon
 import MLXVLM
@@ -7,12 +8,23 @@ import MLXVLM
 @Observable
 @MainActor
 final class ModelManager {
+
+    /// HubApi with blob cache disabled to avoid storing every model twice.
+    /// swift-huggingface defaults to caching in both huggingface/hub/ (snapshots)
+    /// AND models/ (content-addressed blobs). We only need the snapshots.
+    private static let hub = HubApi(cache: nil)
     var currentModel: ModelConfig?
     var modelContainer: ModelContainer?
     var isLoading = false
     var downloadProgress: Double = 0
     var loadingModelName: String = ""
     var errorMessage: String?
+
+    // Download-specific state for the modal
+    var isDownloading = false
+    var downloadFilesTotal: Int64 = 0
+    var downloadFilesCompleted: Int64 = 0
+    var downloadSpeed: Double = 0 // bytes/sec
 
     private var idleTimer: Timer?
     private(set) var lastUsed: Date?
@@ -31,11 +43,26 @@ final class ModelManager {
         loadingModelName = config.displayName
         errorMessage = nil
 
+        let needsDownload = !config.isLocal
+        if needsDownload {
+            isDownloading = true
+            downloadFilesTotal = 0
+            downloadFilesCompleted = 0
+            downloadSpeed = 0
+        }
+
         do {
             let container: ModelContainer
             let progressHandler: @Sendable (Progress) -> Void = { progress in
                 Task { @MainActor in
                     self.downloadProgress = progress.fractionCompleted
+                    if self.isDownloading {
+                        self.downloadFilesTotal = progress.totalUnitCount
+                        self.downloadFilesCompleted = progress.completedUnitCount
+                        if let speed = progress.userInfo[.throughputKey] as? Double {
+                            self.downloadSpeed = speed
+                        }
+                    }
                 }
             }
 
@@ -47,18 +74,28 @@ final class ModelManager {
             }
 
             container = try await VLMModelFactory.shared.loadContainer(
+                hub: Self.hub,
                 configuration: configuration,
                 progressHandler: progressHandler
             )
 
+            self.isDownloading = false
             self.modelContainer = container
             self.currentModel = config
             touchActivity()
         } catch {
+            self.isDownloading = false
             self.errorMessage = "Failed to load model: \(error.localizedDescription)"
         }
 
         isLoading = false
+    }
+
+    /// Delete local cache and re-download a model.
+    func redownloadModel(_ config: ModelConfig) async {
+        unloadModel()
+        LocalModelResolver.deleteLocal(repoId: config.repoId)
+        await loadModel(config)
     }
 
     /// Unload the current model and free GPU memory.

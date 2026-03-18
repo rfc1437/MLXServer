@@ -347,18 +347,23 @@ final class APIServer {
             // Only conversation turns go in `history:` — this avoids replaying the
             // large tool prompt as history on every new session.
             let instr = instructions.isEmpty ? nil : instructions
+            let thinkingContext: [String: any Sendable]? = Preferences.enableThinking
+                ? nil
+                : ["enable_thinking": false]
             if !allButLast.isEmpty {
                 session = ChatSession(
                     container,
                     instructions: instr,
                     history: allButLast,
-                    generateParameters: generateParams
+                    generateParameters: generateParams,
+                    additionalContext: thinkingContext
                 )
             } else {
                 session = ChatSession(
                     container,
                     instructions: instr,
-                    generateParameters: generateParams
+                    generateParameters: generateParams,
+                    additionalContext: thinkingContext
                 )
             }
         }
@@ -464,6 +469,7 @@ final class APIServer {
             }
 
             LiveCounters.shared.requestCompleted(generationTokens: completionTokens)
+            modelManager?.touchActivity()
 
             // Parse tool calls: first check framework-detected ones, then our own text parser
             var finishReason = "stop"
@@ -536,6 +542,7 @@ final class APIServer {
             }
         } catch {
             LiveCounters.shared.requestCompleted(generationTokens: 0)
+            modelManager?.touchActivity()
             sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
         }
     }
@@ -671,6 +678,7 @@ final class APIServer {
         ))
 
         LiveCounters.shared.requestCompleted(generationTokens: completionTokens)
+        modelManager?.touchActivity()
 
         // Send [DONE] and close
         await Self.sendData(connection: connection, data: "data: [DONE]\n\n".data(using: .utf8)!)

@@ -31,10 +31,16 @@ final class ChatViewModel {
         guard let container = modelManager.modelContainer else { return }
         if chatSession == nil {
             let systemPrompt = Preferences.systemPrompt
+            // Pass enable_thinking to the Jinja chat template context.
+            // Qwen3.5 and similar models use this to control reasoning mode.
+            let thinkingContext: [String: any Sendable]? = Preferences.enableThinking
+                ? nil
+                : ["enable_thinking": false]
             chatSession = ChatSession(
                 container,
                 instructions: systemPrompt.isEmpty ? nil : systemPrompt,
-                generateParameters: GenerateParameters(temperature: 0.7)
+                generateParameters: GenerateParameters(temperature: 0.7),
+                additionalContext: thinkingContext
             )
         }
     }
@@ -113,6 +119,7 @@ final class ChatViewModel {
             conversation.finalizeMessage(at: assistantIndex)
             isGenerating = false
             generationTask = nil
+            modelManager.touchActivity()
         }
     }
 
