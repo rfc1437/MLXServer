@@ -24,10 +24,20 @@ struct ContentView: View {
             .navigationTitle(navigationTitleText)
             .onAppear {
                 if chatVM == nil {
-                    chatVM = ChatViewModel(modelManager: modelManager)
+                    let vm = ChatViewModel(modelManager: modelManager)
+                    chatVM = vm
+                    if let delegate = NSApp.delegate as? AppDelegate {
+                        delegate.chatViewModel = vm
+                    }
                     // Auto-start API server if configured
                     if Preferences.apiAutoStart {
-                        chatVM?.startAPIServer()
+                        vm.startAPIServer()
+                    }
+                    // Restore autosaved session if no document is being opened
+                    if !documentController.hasPendingOpenRequests {
+                        Task {
+                            await vm.restoreFromAutosave()
+                        }
                     }
                 }
 

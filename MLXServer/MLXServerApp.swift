@@ -1,11 +1,16 @@
 import SwiftUI
 import MLX
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var chatViewModel: ChatViewModel?
+
     func application(_ application: NSApplication, open urls: [URL]) {
-        Task { @MainActor in
-            ChatDocumentController.shared.enqueueOpenRequests(urls)
-        }
+        ChatDocumentController.shared.enqueueOpenRequests(urls)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        chatViewModel?.autosaveToSandbox()
     }
 }
 
@@ -28,6 +33,7 @@ struct MLXServerApp: App {
                 .environment(sceneStore)
                 .task {
                     guard !documentController.hasPendingOpenRequests else { return }
+                    guard !ChatViewModel.hasAutosavedSession else { return }
                     // Auto-load: configured default → last used → built-in default
                     let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
                     if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {

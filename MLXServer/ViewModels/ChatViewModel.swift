@@ -23,6 +23,7 @@ final class ChatViewModel {
     private(set) var lastSavedSnapshotHash: String?
 
     private var generationTask: Task<Void, Never>?
+    private var autosaveTask: Task<Void, Never>?
     private var chatSession: ChatSession?
     private var documentId = UUID()
     private var documentCreatedAt = Date()
@@ -210,6 +211,7 @@ final class ChatViewModel {
         resetSession()
         resetDocumentState()
         Preferences.lastSceneId = nil
+        scheduleAutosaveIfNeeded()
     }
 
     func startNewConversation(scene: ChatScene?) async {
@@ -248,6 +250,8 @@ final class ChatViewModel {
     }
 
     func loadDocument(from url: URL) async throws {
+        autosaveTask?.cancel()
+
         let package = try ChatDocumentPackage(contentsOf: url)
         let restoredMessages = try package.manifest.messages.map { storedMessage in
             try restoreMessage(storedMessage, attachmentContents: package.attachmentContents)
@@ -281,11 +285,13 @@ final class ChatViewModel {
             throw ChatDocumentError.saveWhileGenerating
         }
 
+        autosaveTask?.cancel()
         let package = try makeDocumentPackage(updatedAt: Date())
         try package.write(to: url)
         currentDocumentURL = url
         lastSavedSnapshotHash = try snapshotHash()
         hasUnsavedChanges = false
+        Self.removeAutosave()
     }
 
     func markDirtyIfNeeded() {
@@ -296,6 +302,8 @@ final class ChatViewModel {
                 || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || activeScene != nil
         }
+
+            scheduleAutosaveIfNeeded()
     }
 
     private func resetDocumentState() {
@@ -449,6 +457,102 @@ final class ChatViewModel {
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return encoder
+    }
+
+    // MARK: - Autosave / Restore
+
+    /// Location for the automatic session save inside the sandbox container.
+    static var autosaveURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("MLXServer", isDirectory: true)
+        return dir.appendingPathComponent("autosave.mlxchat")
+    }
+
+    static var hasAutosavedSession: Bool {
+        FileManager.default.fileExists(atPath: autosaveURL.path)
+    }
+
+    /// Persist the current session so it survives a quit.
+    func autosaveToSandbox() {
+        autosaveTask?.cancel()
+
+        guard currentDocumentURL == nil else {
+            Self.removeAutosave()
+            return
+        }
+
+        // Nothing to save if conversation is empty and no draft text
+        let hasDraft = !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !conversation.messages.isEmpty || hasDraft else {
+            // Remove stale autosave if conversation was cleared
+            Self.removeAutosave()
+            return
+        }
+
+        do {
+            let url = Self.autosaveURL
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            let package = try makeDocumentPackage(updatedAt: Date())
+            try package.write(to: url)
+        } catch {
+            print("[Autosave] Failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Restore a previously autosaved session. Returns true if restored.
+    func restoreFromAutosave() async -> Bool {
+        let url = Self.autosaveURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+
+        do {
+            try await loadDocument(from: url)
+            // Clear document URL so this doesn't look like a user-saved file
+            currentDocumentURL = nil
+            hasUnsavedChanges = false
+            lastSavedSnapshotHash = nil
+
+            if modelManager.currentModel == nil {
+                let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
+                if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {
+                    await modelManager.loadModel(config)
+                }
+            }
+
+            return true
+        } catch {
+            print("[Autosave] Restore failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    static func removeAutosave() {
+        let url = autosaveURL
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private func scheduleAutosaveIfNeeded() {
+        autosaveTask?.cancel()
+
+        guard currentDocumentURL == nil else {
+            Self.removeAutosave()
+            return
+        }
+
+        let hasDraft = !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !conversation.messages.isEmpty || hasDraft || activeScene != nil else {
+            Self.removeAutosave()
+            return
+        }
+
+        autosaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            await self?.autosaveToSandbox()
+        }
     }
 
     // MARK: - API Server
