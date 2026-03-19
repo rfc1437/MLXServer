@@ -41,8 +41,8 @@ struct ModelConfig: Identifiable, Hashable {
             repoId: "mlx-community/Qwen3.5-9B-4bit",
             displayName: "Qwen3.5 9B",
             contextLength: 256_000,
-            loaderKind: .llm,
-            supportsImages: false,
+            loaderKind: .vlm,
+            supportsImages: true,
             supportsTools: true
         ),
         ModelConfig(
