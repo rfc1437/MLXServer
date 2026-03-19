@@ -6,28 +6,31 @@ import SwiftUI
 struct MonitorView: View {
     let stats: InferenceStats
     @Environment(ModelManager.self) private var modelManager
+    private let chartColumns = [GridItem(.flexible(minimum: 260), spacing: 16), GridItem(.flexible(minimum: 260), spacing: 16)]
+    private let cardColumns = [GridItem(.flexible(minimum: 180), spacing: 16), GridItem(.flexible(minimum: 180), spacing: 16)]
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                // Live status header
                 liveStatusSection
 
-                // Charts
-                HStack(alignment: .top, spacing: 16) {
+                LazyVGrid(columns: chartColumns, alignment: .leading, spacing: 16) {
                     tokenRateChart
                     tokenThroughputChart
+                    cacheReuseChart
+                    cacheFootprintChart
+                    cacheSessionChart
                 }
 
-                // Gauges row
-                HStack(spacing: 16) {
+                LazyVGrid(columns: cardColumns, alignment: .leading, spacing: 16) {
                     contextGauge
                     gpuMemoryGauge
                     requestsCard
+                    cacheCard
                 }
 
-                // Cumulative stats
                 cumulativeSection
+                sessionSection
             }
             .padding(20)
         }
@@ -39,45 +42,54 @@ struct MonitorView: View {
 
     @ViewBuilder
     private var liveStatusSection: some View {
-        HStack(spacing: 16) {
-            // Activity indicator
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(activityColor)
-                    .frame(width: 10, height: 10)
-                    .overlay {
-                        if stats.isGenerating || stats.isPrefilling {
-                            Circle()
-                                .stroke(activityColor.opacity(0.5), lineWidth: 2)
-                                .scaleEffect(1.8)
-                                .opacity(0.6)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(activityColor)
+                        .frame(width: 10, height: 10)
+                        .overlay {
+                            if stats.activeRequests > 0 {
+                                Circle()
+                                    .stroke(activityColor.opacity(0.5), lineWidth: 2)
+                                    .scaleEffect(1.8)
+                                    .opacity(0.6)
+                            }
                         }
-                    }
 
-                Text(activityLabel)
-                    .font(.headline)
-            }
-
-            Spacer()
-
-            if stats.isGenerating {
-                Text(String(format: "%.1f tok/s", stats.currentTokensPerSecond))
-                    .font(.title2.monospacedDigit().bold())
-                    .foregroundStyle(.green)
-            }
-
-            if stats.currentPromptTokens > 0 {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .foregroundStyle(.blue)
-                    Text("\(stats.currentPromptTokens)")
-                        .monospacedDigit()
-                    Image(systemName: "arrow.up.circle.fill")
-                        .foregroundStyle(.orange)
-                    Text("\(stats.currentGenerationTokens)")
-                        .monospacedDigit()
+                    Text(activityLabel)
+                        .font(.headline)
                 }
-                .font(.callout)
+
+                Spacer()
+
+                if stats.isGenerating {
+                    Text(String(format: "%.1f tok/s", stats.currentTokensPerSecond))
+                        .font(.title2.monospacedDigit().bold())
+                        .foregroundStyle(.green)
+                }
+
+                if stats.currentPromptTokens > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundStyle(.blue)
+                        Text("\(stats.currentPromptTokens)")
+                            .monospacedDigit()
+                        Image(systemName: "arrow.up.circle.fill")
+                            .foregroundStyle(.orange)
+                        Text("\(stats.currentGenerationTokens)")
+                            .monospacedDigit()
+                    }
+                    .font(.callout)
+                }
+            }
+
+            HStack(spacing: 8) {
+                phaseChip(title: "Preparing", count: stats.preparingRequests, color: .secondary)
+                phaseChip(title: "Session Build", count: stats.sessionBuildRequests, color: .purple)
+                phaseChip(title: "Prefill", count: stats.prefillingRequests, color: .blue)
+                phaseChip(title: "Generating", count: stats.generatingRequests, color: .green)
+                phaseChip(title: "Cache Active", count: stats.activeCacheEntryCount, color: .orange)
             }
         }
         .padding(12)
@@ -85,15 +97,19 @@ struct MonitorView: View {
     }
 
     private var activityColor: Color {
-        if stats.isPrefilling { return .blue }
         if stats.isGenerating { return .green }
+        if stats.prefillingRequests > 0 { return .blue }
+        if stats.sessionBuildRequests > 0 { return .purple }
+        if stats.preparingRequests > 0 { return .orange }
         if stats.activeRequests > 0 { return .orange }
         return .secondary
     }
 
     private var activityLabel: String {
-        if stats.isPrefilling { return "Prefilling" }
         if stats.isGenerating { return "Generating" }
+        if stats.prefillingRequests > 0 { return "Prefilling" }
+        if stats.sessionBuildRequests > 0 { return "Building Sessions" }
+        if stats.preparingRequests > 0 { return "Preparing Requests" }
         if stats.activeRequests > 0 { return "Processing" }
         return "Idle"
     }
@@ -140,6 +156,160 @@ struct MonitorView: View {
             }
             .chartYScale(domain: 0...(maxTokenRate + 1))
             .frame(height: 150)
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var cacheReuseChart: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Prefill Reuse (/sec)")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+
+            Chart {
+                ForEach(stats.cacheReuseHistory) { point in
+                    BarMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Tokens", point.value)
+                    )
+                    .foregroundStyle(.green.opacity(0.75))
+                }
+                ForEach(stats.cacheRebuildHistory) { point in
+                    BarMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Tokens", point.value)
+                    )
+                    .foregroundStyle(.red.opacity(0.65))
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .second, count: 30)) { _ in
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text(String(format: "%.0f", v))
+                                .font(.caption2.monospacedDigit())
+                        }
+                    }
+                }
+            }
+            .frame(height: 150)
+
+            HStack(spacing: 12) {
+                Label("Reused", systemImage: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                Label("Rebuilt", systemImage: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var cacheFootprintChart: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Cache Footprint (est)")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+
+            Chart(stats.cacheFootprintHistory) { point in
+                LineMark(
+                    x: .value("Time", point.timestamp),
+                    y: .value("MB", point.value / 1_048_576)
+                )
+                .foregroundStyle(.orange)
+                .interpolationMethod(.monotone)
+
+                AreaMark(
+                    x: .value("Time", point.timestamp),
+                    y: .value("MB", point.value / 1_048_576)
+                )
+                .foregroundStyle(.orange.opacity(0.12))
+                .interpolationMethod(.monotone)
+            }
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .second, count: 30)) { _ in
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text(String(format: "%.1f", v))
+                                .font(.caption2.monospacedDigit())
+                        }
+                    }
+                }
+            }
+            .frame(height: 150)
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var cacheSessionChart: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Cached Sessions")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+
+            Chart {
+                ForEach(stats.cacheEntryHistory) { point in
+                    LineMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Cached", point.value)
+                    )
+                    .foregroundStyle(.purple)
+                    .interpolationMethod(.monotone)
+                }
+                ForEach(stats.activeSessionHistory) { point in
+                    LineMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Active", point.value)
+                    )
+                    .foregroundStyle(.blue)
+                    .interpolationMethod(.monotone)
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .second, count: 30)) { _ in
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text(String(format: "%.0f", v))
+                                .font(.caption2.monospacedDigit())
+                        }
+                    }
+                }
+            }
+            .frame(height: 150)
+
+            HStack(spacing: 12) {
+                Label("Cached", systemImage: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.purple)
+                Label("Active", systemImage: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+            }
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
@@ -303,35 +473,69 @@ struct MonitorView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 
+    @ViewBuilder
+    private var cacheCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Session Cache")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+
+            Text("\(stats.cacheEntryCount)")
+                .font(.title3.monospacedDigit().bold())
+
+            LabeledContent("Warm") {
+                Text("\(stats.warmCacheEntryCount)")
+                    .monospacedDigit()
+            }
+            .font(.caption)
+
+            LabeledContent("Active") {
+                Text("\(stats.activeCacheEntryCount)")
+                    .monospacedDigit()
+            }
+            .font(.caption)
+
+            LabeledContent("Est. Footprint") {
+                Text(formatByteCount(stats.cacheEstimatedBytes))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+
+            LabeledContent("Cached Tokens") {
+                Text(formatTokenCount(stats.cacheEstimatedTokens))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+
+            LabeledContent("Hit Rate") {
+                Text(String(format: "%.0f%%", cacheHitRate * 100))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
     // MARK: - Cumulative
 
     @ViewBuilder
     private var cumulativeSection: some View {
-        HStack(spacing: 24) {
-            VStack(spacing: 2) {
-                Text("Total Prompt Tokens")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(formatTokenCount(stats.totalPromptTokens))
-                    .font(.callout.monospacedDigit().bold())
-                    .foregroundStyle(.blue)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Cumulative")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
 
-            VStack(spacing: 2) {
-                Text("Total Generated Tokens")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(formatTokenCount(stats.totalGenerationTokens))
-                    .font(.callout.monospacedDigit().bold())
-                    .foregroundStyle(.orange)
-            }
-
-            VStack(spacing: 2) {
-                Text("Total Tokens")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(formatTokenCount(stats.totalPromptTokens + stats.totalGenerationTokens))
-                    .font(.callout.monospacedDigit().bold())
+            LazyVGrid(columns: cardColumns, alignment: .leading, spacing: 12) {
+                statTile(title: "Prompt Tokens", value: formatTokenCount(stats.totalPromptTokens), color: .blue)
+                statTile(title: "Generated Tokens", value: formatTokenCount(stats.totalGenerationTokens), color: .orange)
+                statTile(title: "Cache Hits", value: "\(stats.totalCacheHits)", color: .green)
+                statTile(title: "Cache Misses", value: "\(stats.totalCacheMisses)", color: .red)
+                statTile(title: "Reused Prefill", value: formatTokenCount(stats.totalCacheReusePromptTokens), color: .green)
+                statTile(title: "Rebuilt Prefill", value: formatTokenCount(stats.totalCacheRebuildPromptTokens), color: .red)
+                statTile(title: "Evictions", value: "\(stats.totalCacheEvictions)", color: .secondary)
+                statTile(title: "Total Tokens", value: formatTokenCount(stats.totalPromptTokens + stats.totalGenerationTokens), color: .primary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -339,7 +543,128 @@ struct MonitorView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 
+    @ViewBuilder
+    private var sessionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Cached Chat Sessions")
+                    .font(.headline)
+                Spacer()
+                Text("\(stats.cachedSessions.count) visible")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if stats.cachedSessions.isEmpty {
+                Text("No cached sessions yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(stats.cachedSessions) { session in
+                    sessionRow(session)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
     // MARK: - Helpers
+
+    @ViewBuilder
+    private func phaseChip(title: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(title)
+            Text("\(count)")
+                .monospacedDigit()
+        }
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.12), in: Capsule())
+    }
+
+    @ViewBuilder
+    private func statTile(title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout.monospacedDigit().bold())
+                .foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: ConversationSessionCache.SessionSummary) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(color(for: session.phase))
+                        .frame(width: 8, height: 8)
+                    Text(session.modelId)
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(session.phase.rawValue)
+                    .font(.caption.monospacedDigit())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(color(for: session.phase).opacity(0.14), in: Capsule())
+            }
+
+            HStack(spacing: 12) {
+                sessionMetric("Msgs", "\(session.messageCount)")
+                sessionMetric("Cached", formatTokenCount(session.cachedTokenEstimate))
+                sessionMetric("Reuse", formatTokenCount(session.lastReuseTokens))
+                sessionMetric("Footprint", formatByteCount(session.estimatedBytes))
+                sessionMetric("Hits", "\(session.hitCount)")
+                sessionMetric("Active", "\(session.inFlightRequests)")
+            }
+
+            HStack(spacing: 12) {
+                sessionMetric("Prompt", formatTokenCount(session.lastPromptTokens))
+                sessionMetric("Completion", formatTokenCount(session.lastCompletionTokens))
+                sessionMetric("Last Access", relativeTimeString(session.lastAccessAt))
+            }
+
+            let ratio = maxContextRatio(for: session.cachedTokenEstimate)
+            ProgressView(value: ratio) {
+                Text("Cached Context")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } currentValueLabel: {
+                Text("\(Int(ratio * 100))%")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .tint(color(for: session.phase))
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func sessionMetric(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.monospacedDigit().bold())
+        }
+    }
 
     private func formatTokenCount(_ count: Int) -> String {
         if count >= 1_000_000 {
@@ -348,5 +673,53 @@ struct MonitorView: View {
             return String(format: "%.1fk", Double(count) / 1_000)
         }
         return "\(count)"
+    }
+
+    private func formatByteCount(_ count: Int) -> String {
+        let bytes = Double(count)
+        if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", bytes / 1_048_576)
+        }
+        if bytes >= 1024 {
+            return String(format: "%.0f KB", bytes / 1024)
+        }
+        return "\(count) B"
+    }
+
+    private func relativeTimeString(_ date: Date) -> String {
+        let seconds = max(0, Int(Date.now.timeIntervalSince(date)))
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        return "\(minutes / 60)h"
+    }
+
+    private func color(for phase: APISessionPhase) -> Color {
+        switch phase {
+        case .idle:
+            return .secondary
+        case .sessionBuild:
+            return .purple
+        case .prefilling:
+            return .blue
+        case .generating:
+            return .green
+        }
+    }
+
+    private var cacheHitRate: Double {
+        let total = stats.totalCacheHits + stats.totalCacheMisses
+        guard total > 0 else { return 0 }
+        return Double(stats.totalCacheHits) / Double(total)
+    }
+
+    private func maxContextRatio(for tokens: Int) -> Double {
+        let maxContext = max(stats.contextMax, modelManager.currentModel?.contextLength ?? 0)
+        guard maxContext > 0 else { return 0 }
+        return min(1, Double(tokens) / Double(maxContext))
     }
 }

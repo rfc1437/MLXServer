@@ -42,6 +42,7 @@
 		D666A311788375E8A061C832 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4147321383E94E9F17A0154E /* SettingsView.swift */; };
 		D96DDE66F76FDDA642629E17 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A52E2C9964ADA9D841A89B /* APIModels.swift */; };
 		DF5C525DBD2E3153256951C1 /* SceneManagementWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA1592FD260014C4FBDB6995 /* SceneManagementWindow.swift */; };
+		F141B91A64F7DAD73CE2910A /* ConversationSessionCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBB16D3AF2E61D001FD6051 /* ConversationSessionCache.swift */; };
 		F546CE5955ED253D8A793D5E /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A98257123539E9E738213BFA /* MarkdownUI */; };
 		FAF7D4714AC6D02674920208 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B359324B5FD8D106C74338 /* ChatMessage.swift */; };
 		FCD48F8C132A2B830A15EEB4 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 3F5A4AC6DBAF7CA686ECA74E /* MLXLLM */; };
@@ -85,6 +86,7 @@
 		E73B165A1822729C907791AE /* ToolCallParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallParser.swift; sourceTree = "<group>"; };
 		EF518FEBF3A38E830E3CE1A5 /* FocusedValues.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedValues.swift; sourceTree = "<group>"; };
 		F1A52E2C9964ADA9D841A89B /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
+		FFBB16D3AF2E61D001FD6051 /* ConversationSessionCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSessionCache.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -203,6 +205,7 @@
 			children = (
 				F1A52E2C9964ADA9D841A89B /* APIModels.swift */,
 				3D08828E16B17EF02C14243E /* APIServer.swift */,
+				FFBB16D3AF2E61D001FD6051 /* ConversationSessionCache.swift */,
 				E73B165A1822729C907791AE /* ToolCallParser.swift */,
 				16AE82A64D1D07AE3CD8D33A /* ToolPromptBuilder.swift */,
 			);
@@ -306,6 +309,7 @@
 				85FB1EB49D76A9F21E181346 /* ChatScene.swift in Sources */,
 				B5AA6E3B4BE21676226B342B /* ChatViewModel.swift in Sources */,
 				5946258F1DE88CE904584E0B /* ContentView.swift in Sources */,
+				F141B91A64F7DAD73CE2910A /* ConversationSessionCache.swift in Sources */,
 				C07A377244DCD67F4FE709FE /* DownloadModalView.swift in Sources */,
 				4DC033E45880B2948B47DEB1 /* FocusedValues.swift in Sources */,
 				2D08769282BD71C170DB0943 /* InferenceStats.swift in Sources */,

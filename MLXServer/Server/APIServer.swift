@@ -16,12 +16,6 @@ final class APIServer {
     private var listener: NWListener?
     private var modelManager: ModelManager?
 
-    // Persistent ChatSession for KV cache reuse across requests
-    private var cachedSession: ChatSession?
-    private var cachedMessages: [Chat.Message]?
-    private var cachedModelId: String?
-    private var cachedInstructions: String = ""
-
     func start(modelManager: ModelManager, port: Int = 1234) {
         guard !isRunning else { return }
         self.modelManager = modelManager
@@ -70,10 +64,7 @@ final class APIServer {
         listener?.cancel()
         listener = nil
         isRunning = false
-        cachedSession = nil
-        cachedMessages = nil
-        cachedModelId = nil
-        cachedInstructions = ""
+        ConversationSessionCache.shared.invalidateAll()
         inferenceStats.stopSampling()
     }
 
@@ -186,10 +177,7 @@ final class APIServer {
             if let targetConfig = ModelConfig.resolve(requestedModel) {
                 if modelManager.currentModel?.id != targetConfig.id {
                     print("[APIServer] Swapping model: \(modelManager.currentModel?.repoId ?? "none") -> \(targetConfig.repoId)")
-                    cachedSession = nil
-                    cachedMessages = nil
-                    cachedModelId = nil
-                    cachedInstructions = ""
+                    ConversationSessionCache.shared.invalidateAll()
                     await modelManager.loadModel(targetConfig)
                 }
             }
@@ -200,10 +188,7 @@ final class APIServer {
         if modelManager.modelContainer == nil, let lastModelId = Preferences.lastModelId,
            let config = ModelConfig.resolve(lastModelId) {
             print("[APIServer] Reloading idle-unloaded model: \(config.repoId)")
-            cachedSession = nil
-            cachedMessages = nil
-            cachedModelId = nil
-            cachedInstructions = ""
+            ConversationSessionCache.shared.invalidateAll()
             await modelManager.loadModel(config)
         }
 
@@ -233,9 +218,13 @@ final class APIServer {
             return
         }
 
+        LiveCounters.shared.requestStarted(requestId: requestId, contextLength: contextLength)
+
         // Convert API messages to Chat.Message, extracting images from content parts
         var chatMessages: [Chat.Message] = []
+        var messageSignatures: [UInt64] = []
         var images: [UserInput.Image] = []
+        var estimatedBytes = 0
         let currentModelRepoId = currentModel?.repoId ?? modelName
 
         // Build the instructions string (system prompt + tool definitions).
@@ -259,8 +248,8 @@ final class APIServer {
             instructions += toolSystemPrompt
         }
 
-        let toolsForInjection = request.tools
         let isQwen = currentModelRepoId.lowercased().contains("qwen")
+        estimatedBytes += instructions.utf8.count
 
         // Convert non-system messages to Chat.Message
         for msg in request.messages where msg.role != "system" {
@@ -297,18 +286,25 @@ final class APIServer {
             // Extract base64 images from content parts
             let imageURLs = msg.content?.imageURLs ?? []
             var messageImages: [UserInput.Image] = []
+            var messageImageBytes = 0
             for urlString in imageURLs {
-                if let image = decodeBase64Image(urlString) {
-                    messageImages.append(image)
+                if let decoded = decodeBase64Image(urlString) {
+                    messageImages.append(decoded.image)
+                    messageImageBytes += decoded.estimatedBytes
                 }
             }
 
             // Attach images to this specific message
             chatMessages.append(Chat.Message(role: role, content: text, images: messageImages))
+            messageSignatures.append(
+                Self.messageSignature(role: role, content: text, imageURLs: imageURLs)
+            )
+            estimatedBytes += text.utf8.count + messageImageBytes
             images.append(contentsOf: messageImages)
         }
 
         if !images.isEmpty, currentModel?.supportsImages != true {
+            LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: 0)
             sendResponse(
                 connection: connection,
                 status: 400,
@@ -318,18 +314,18 @@ final class APIServer {
         }
 
         // Context window check: estimate token count and reject if over limit
+        let estimatedPromptTokens = (instructions.count + chatMessages.reduce(0) { $0 + $1.content.count }) * 10 / 35
         if contextLength > 0 {
-            let totalChars = chatMessages.reduce(0) { $0 + $1.content.count }
-            let estimatedTokens = totalChars * 10 / 35  // ~3.5 chars per token
-            let needed = estimatedTokens + maxTokens
+            let needed = estimatedPromptTokens + maxTokens
             if needed > contextLength {
                 let errorBody = """
                 {"error":{"message":"This model's maximum context length is \(contextLength) tokens. \
-                However, your messages resulted in approximately \(estimatedTokens) tokens and \
+                However, your messages resulted in approximately \(estimatedPromptTokens) tokens and \
                 \(maxTokens) tokens were requested for the completion (\(needed) total). \
                 Please reduce the length of the messages or completion.",\
                 "type":"invalid_request_error","code":"context_length_exceeded"}}
                 """
+                LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: 0)
                 sendResponse(connection: connection, status: 400, body: errorBody)
                 return
             }
@@ -345,23 +341,28 @@ final class APIServer {
         let allButLast = Array(chatMessages.dropLast())
         let lastMessage = chatMessages.last ?? Chat.Message(role: .user, content: "")
 
-        // KV cache reuse: check if the cached session's history matches
-        let currentModelId = modelManager.currentModel?.id
-        let canReuse = cachedSession != nil
-            && cachedModelId == currentModelId
-            && cachedMessages != nil
-            && cachedInstructions == instructions
-            && messagesMatch(cachedMessages!, allButLast)
+        let historySignatures = Array(messageSignatures.dropLast())
+        let currentModelId = modelManager.currentModel?.id ?? modelName
+        let lease = ConversationSessionCache.shared.checkoutSession(
+            modelId: currentModelId,
+            instructions: instructions,
+            historySignatures: historySignatures,
+            requestMessageCount: chatMessages.count,
+            estimatedPromptTokens: estimatedPromptTokens,
+            estimatedBytes: estimatedBytes
+        )
 
         let session: ChatSession
-        if canReuse {
+        if let reusableSession = lease.session {
             print("[APIServer] Reusing cached session (\(allButLast.count) history messages)")
-            session = cachedSession!
+            session = reusableSession
             session.generateParameters = generateParams
+            ConversationSessionCache.shared.markPrefilling(entryId: lease.entryId)
+            LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .prefilling)
         } else {
-            if cachedSession != nil {
-                print("[APIServer] History diverged, creating fresh session")
-            }
+            print("[APIServer] Creating fresh session")
+            ConversationSessionCache.shared.markSessionBuild(entryId: lease.entryId)
+            LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .sessionBuild)
             // Use `instructions:` for system/tool prompt (matches internal chat pattern).
             // Only conversation turns go in `history:` — this avoids replaying the
             // large tool prompt as history on every new session.
@@ -385,47 +386,62 @@ final class APIServer {
                     additionalContext: thinkingContext
                 )
             }
+            ConversationSessionCache.shared.markPrefilling(entryId: lease.entryId)
+            LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .prefilling)
         }
 
         // Extract images from the last message only (ChatSession.streamDetails takes images separately)
         let lastImages = lastMessage.images
 
-        LiveCounters.shared.requestStarted(contextLength: contextLength)
+        let result: (promptTokens: Int, completionTokens: Int, succeeded: Bool)
 
         if isStream {
-            await handleStreamingResponse(
+            result = await handleStreamingResponse(
                 connection: connection,
+                requestId: requestId,
+                cacheEntryId: lease.entryId,
                 session: session,
                 prompt: lastMessage.content,
                 images: lastImages,
                 tools: request.tools,
-                requestId: requestId,
                 created: created,
                 modelName: modelName
             )
         } else {
-            await handleNonStreamingResponse(
+            result = await handleNonStreamingResponse(
                 connection: connection,
+                requestId: requestId,
+                cacheEntryId: lease.entryId,
                 session: session,
                 prompt: lastMessage.content,
                 images: lastImages,
                 tools: request.tools,
-                requestId: requestId,
                 created: created,
                 modelName: modelName
             )
         }
 
-        // Cache the session for reuse on next request
-        // allButLast + lastMessage (user) + assistant response = new cached history
-        cachedSession = session
-        cachedMessages = chatMessages  // full messages including the one just sent
-        cachedModelId = currentModelId
-        cachedInstructions = instructions
+        if result.succeeded {
+            ConversationSessionCache.shared.completeRequest(
+                entryId: lease.entryId,
+                session: session,
+                requestMessageSignatures: messageSignatures,
+                requestMessageCount: chatMessages.count,
+                estimatedPromptTokens: estimatedPromptTokens,
+                estimatedBytes: estimatedBytes,
+                promptTokens: result.promptTokens,
+                completionTokens: result.completionTokens
+            )
+        } else {
+            ConversationSessionCache.shared.abandonRequest(entryId: lease.entryId)
+        }
+
+        LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: result.completionTokens)
+        modelManager.touchActivity()
     }
 
     /// Decode a base64 data URI (data:image/png;base64,...) into a UserInput.Image.
-    private func decodeBase64Image(_ urlString: String) -> UserInput.Image? {
+    private func decodeBase64Image(_ urlString: String) -> DecodedImage? {
         // Handle data URIs: data:image/png;base64,<data>
         let base64String: String
         if urlString.hasPrefix("data:") {
@@ -442,21 +458,23 @@ final class APIServer {
             return nil
         }
 
-        return .ciImage(CIImage(cgImage: cgImage))
+                let estimatedBytes = max(data.count, cgImage.width * cgImage.height * 4)
+                return DecodedImage(image: .ciImage(CIImage(cgImage: cgImage)), estimatedBytes: estimatedBytes)
     }
 
     // MARK: - Non-streaming response
 
     private func handleNonStreamingResponse(
         connection: NWConnection,
+        requestId: String,
+        cacheEntryId: UUID,
         session: ChatSession,
         prompt: String,
         images: [UserInput.Image],
         tools: [APIToolDefinition]?,
-        requestId: String,
         created: Int,
         modelName: String
-    ) async {
+    ) async -> (promptTokens: Int, completionTokens: Int, succeeded: Bool) {
         do {
             var fullText = ""
             var promptTokens = 0
@@ -478,7 +496,12 @@ final class APIServer {
                 case .info(let info):
                     promptTokens = info.promptTokenCount
                     completionTokens = info.generationTokenCount
-                    LiveCounters.shared.prefillCompleted(promptTokens: promptTokens)
+                    ConversationSessionCache.shared.markGenerating(
+                        entryId: cacheEntryId,
+                        promptTokens: promptTokens,
+                        completionTokens: completionTokens
+                    )
+                    LiveCounters.shared.prefillCompleted(requestId: requestId, promptTokens: promptTokens)
                     if info.tokensPerSecond > 0 {
                         LiveCounters.shared.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
                     }
@@ -486,9 +509,6 @@ final class APIServer {
                     frameworkToolCalls.append(call)
                 }
             }
-
-            LiveCounters.shared.requestCompleted(generationTokens: completionTokens)
-            modelManager?.touchActivity()
 
             // Parse tool calls: first check framework-detected ones, then our own text parser
             var finishReason = "stop"
@@ -559,10 +579,10 @@ final class APIServer {
             if let json = try? JSONEncoder().encode(response) {
                 sendResponse(connection: connection, status: 200, body: String(data: json, encoding: .utf8) ?? "{}")
             }
+            return (promptTokens, completionTokens, true)
         } catch {
-            LiveCounters.shared.requestCompleted(generationTokens: 0)
-            modelManager?.touchActivity()
             sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
+            return (0, 0, false)
         }
     }
 
@@ -570,14 +590,15 @@ final class APIServer {
 
     private func handleStreamingResponse(
         connection: NWConnection,
+        requestId: String,
+        cacheEntryId: UUID,
         session: ChatSession,
         prompt: String,
         images: [UserInput.Image],
         tools: [APIToolDefinition]?,
-        requestId: String,
         created: Int,
         modelName: String
-    ) async {
+    ) async -> (promptTokens: Int, completionTokens: Int, succeeded: Bool) {
         // Send SSE headers
         let header = [
             "HTTP/1.1 200 OK",
@@ -625,7 +646,16 @@ final class APIServer {
             )
         }()
 
-        let (promptTokens, completionTokens, fullText, frameworkToolCalls) = result
+        let (promptTokens, completionTokens, fullText, frameworkToolCalls, succeeded) = result
+
+        if promptTokens > 0 {
+            ConversationSessionCache.shared.markGenerating(
+                entryId: cacheEntryId,
+                promptTokens: promptTokens,
+                completionTokens: completionTokens
+            )
+            LiveCounters.shared.prefillCompleted(requestId: requestId, promptTokens: promptTokens)
+        }
 
         // Stats were already updated by LiveCounters inside the loop
 
@@ -696,12 +726,10 @@ final class APIServer {
             )
         ))
 
-        LiveCounters.shared.requestCompleted(generationTokens: completionTokens)
-        modelManager?.touchActivity()
-
         // Send [DONE] and close
         await Self.sendData(connection: connection, data: "data: [DONE]\n\n".data(using: .utf8)!)
         connection.cancel()
+        return (promptTokens, completionTokens, succeeded)
     }
 
     /// Run the token generation + SSE send loop entirely off MainActor.
@@ -713,7 +741,7 @@ final class APIServer {
         requestId: String,
         created: Int,
         modelName: String
-    ) async -> (Int, Int, String, [MLXLMCommon.ToolCall]) {
+    ) async -> (Int, Int, String, [MLXLMCommon.ToolCall], Bool) {
         var promptTokens = 0
         var completionTokens = 0
         var fullText = ""
@@ -742,7 +770,6 @@ final class APIServer {
                 case .info(let info):
                     promptTokens = info.promptTokenCount
                     completionTokens = info.generationTokenCount
-                    LiveCounters.shared.prefillCompleted(promptTokens: promptTokens)
                     if info.tokensPerSecond > 0 {
                         LiveCounters.shared.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
                     }
@@ -754,9 +781,10 @@ final class APIServer {
         } catch {
             let errorEvent = "data: {\"error\":\"\(error.localizedDescription)\"}\n\n"
             await sendData(connection: connection, data: errorEvent.data(using: .utf8)!)
+            return (promptTokens, completionTokens, fullText, frameworkToolCalls, false)
         }
 
-        return (promptTokens, completionTokens, fullText, frameworkToolCalls)
+        return (promptTokens, completionTokens, fullText, frameworkToolCalls, true)
     }
 
     /// Send an SSE event and wait for the protocol stack to process it.
@@ -819,24 +847,40 @@ final class APIServer {
         ]
     }
 
-    /// Check if the cached session can be reused for the new history.
-    ///
-    /// After a request the session's KV cache contains:
-    ///   cachedMessages (history + user prompt) + the generated assistant response.
-    /// On the next request the client sends back the full conversation, so
-    /// `newHistory` (allButLast) is typically `cachedMessages` + 1 assistant reply.
-    /// We allow reuse when `cached` is a prefix of `newHistory` and there is at most
-    /// one extra message (the assistant response the session already generated).
-    /// More than one extra message (e.g. injected tool results) means the session
-    /// hasn't processed them, so we must create a fresh session.
-    private func messagesMatch(_ cached: [Chat.Message], _ newHistory: [Chat.Message]) -> Bool {
-        guard cached.count <= newHistory.count,
-              newHistory.count <= cached.count + 1 else { return false }
-        for (a, b) in zip(cached, newHistory) {
-            if a.role != b.role || a.content != b.content { return false }
+    private static func messageSignature(role: Chat.Message.Role, content: String, imageURLs: [String]) -> UInt64 {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+
+        func mix(_ text: String) {
+            for byte in text.utf8 {
+                hash ^= UInt64(byte)
+                hash &*= 1_099_511_628_211
+            }
         }
-        return true
+
+        switch role {
+        case .assistant:
+            mix("assistant")
+        case .system:
+            mix("system")
+        case .user:
+            mix("user")
+        @unknown default:
+            mix("unknown")
+        }
+        mix("|")
+        mix(content)
+        for imageURL in imageURLs {
+            mix("|")
+            mix(imageURL)
+        }
+
+        return hash
     }
+}
+
+private struct DecodedImage {
+    let image: UserInput.Image
+    let estimatedBytes: Int
 }
 
 // MARK: - HTTP request parser

@@ -16,6 +16,50 @@ struct APIToolDefinition: Codable {
 struct APIFunctionCall: Codable {
     let name: String
     let arguments: String // JSON string
+
+    init(name: String, arguments: String) {
+        self.name = name
+        self.arguments = arguments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+
+        if let argumentString = try? container.decode(String.self, forKey: .arguments) {
+            arguments = argumentString
+            return
+        }
+
+        if let argumentObject = try? container.decode([String: AnyCodable].self, forKey: .arguments) {
+            let jsonObject = argumentObject.mapValues(\.value)
+            if let data = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.sortedKeys]),
+               let string = String(data: data, encoding: .utf8) {
+                arguments = string
+            } else {
+                arguments = "{}"
+            }
+            return
+        }
+
+        if let argumentArray = try? container.decode([AnyCodable].self, forKey: .arguments) {
+            let jsonObject = argumentArray.map(\.value)
+            if let data = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.sortedKeys]),
+               let string = String(data: data, encoding: .utf8) {
+                arguments = string
+            } else {
+                arguments = "[]"
+            }
+            return
+        }
+
+        if (try? container.decodeNil(forKey: .arguments)) == true {
+            arguments = "{}"
+            return
+        }
+
+        arguments = "{}"
+    }
 }
 
 struct APIToolCall: Codable {
@@ -29,6 +73,14 @@ struct APIToolCall: Codable {
         self.id = id
         self.type = type
         self.function = function
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        index = try container.decodeIfPresent(Int.self, forKey: .index) ?? 0
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? "call_\(UUID().uuidString.lowercased())"
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? "function"
+        function = try container.decode(APIFunctionCall.self, forKey: .function)
     }
 }
 
