@@ -8,10 +8,8 @@ Native macOS app for running local LLMs on Apple Silicon via [MLX](https://githu
 |-------|-------|---------|--------|-------------|
 | `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | `VLMModelFactory` | Vision, tool use (`tool_code` blocks) |
 | `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | `VLMModelFactory` | Vision, tool use (`<tool_call>` tags) |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `LLMModelFactory` | Text-only, thinking mode, tool use |
-| `stheno` | `synk/L3-8B-Stheno-v3.2-MLX` | 8k | `LLMModelFactory` | Text-only |
-
-`stheno` is loaded as a standard MLX text model. The Hugging Face card provides an `mlx_lm.load(...)` sample rather than a VLM example, and its config reports `model_type: llama` with `max_position_embeddings: 8192`, so the app treats it as an 8k Llama-family text model.
+| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `LLMModelFactory` | Vision, thinking mode, tool use |
+| `stheno` | `synk/L3-8B-Stheno-v3.2-MLX` | 8k | `LLMModelFactory` | Text-only, llama-based |
 
 Any model in MLX format on HuggingFace can be added — there is no restriction on uploader or architecture.
 
