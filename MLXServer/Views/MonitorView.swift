@@ -17,6 +17,7 @@ struct MonitorView: View {
                 LazyVGrid(columns: chartColumns, alignment: .leading, spacing: 16) {
                     tokenRateChart
                     tokenThroughputChart
+                    phaseActivityChart
                     cacheReuseChart
                     cacheFootprintChart
                     cacheSessionChart
@@ -90,6 +91,9 @@ struct MonitorView: View {
                 phaseChip(title: "Prefill", count: stats.prefillingRequests, color: .blue)
                 phaseChip(title: "Generating", count: stats.generatingRequests, color: .green)
                 phaseChip(title: "Cache Active", count: stats.activeCacheEntryCount, color: .orange)
+                if stats.activeRequests > 0 {
+                    phaseChip(title: phaseAgeLabel, count: Int(stats.currentPhaseElapsed.rounded()), color: activityColor)
+                }
             }
         }
         .padding(12)
@@ -156,6 +160,71 @@ struct MonitorView: View {
             }
             .chartYScale(domain: 0...(maxTokenRate + 1))
             .frame(height: 150)
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var phaseActivityChart: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Phase Activity")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+
+            Chart {
+                ForEach(stats.currentPhaseElapsedHistory) { point in
+                    LineMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Active s", point.value)
+                    )
+                    .foregroundStyle(activityColor)
+                    .interpolationMethod(.monotone)
+                }
+                ForEach(stats.prefillDurationHistory) { point in
+                    BarMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Prefill done", point.value)
+                    )
+                    .foregroundStyle(.blue.opacity(0.45))
+                }
+                ForEach(stats.sessionBuildDurationHistory) { point in
+                    BarMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Build done", point.value)
+                    )
+                    .foregroundStyle(.purple.opacity(0.45))
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .second, count: 30)) { _ in
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text(String(format: "%.0f", v))
+                                .font(.caption2.monospacedDigit())
+                        }
+                    }
+                }
+            }
+            .frame(height: 150)
+
+            HStack(spacing: 12) {
+                Label("Active phase age", systemImage: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(activityColor)
+                Label("Prefill completed", systemImage: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+                Label("Session build completed", systemImage: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.purple)
+            }
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
@@ -715,6 +784,13 @@ struct MonitorView: View {
         let total = stats.totalCacheHits + stats.totalCacheMisses
         guard total > 0 else { return 0 }
         return Double(stats.totalCacheHits) / Double(total)
+    }
+
+    private var phaseAgeLabel: String {
+        if stats.generatingRequests > 0 { return "Generating s" }
+        if stats.prefillingRequests > 0 { return "Prefill s" }
+        if stats.sessionBuildRequests > 0 { return "Build s" }
+        return "Preparing s"
     }
 
     private func maxContextRatio(for tokens: Int) -> Double {

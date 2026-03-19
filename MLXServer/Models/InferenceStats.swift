@@ -9,7 +9,7 @@ final class LiveCounters: @unchecked Sendable {
     static let shared = LiveCounters()
 
     private let lock = OSAllocatedUnfairLock()
-    private var requestPhases: [String: RequestPhase] = [:]
+    private var requestPhases: [String: RequestState] = [:]
 
     // Current request
     private var _activeRequests: Int = 0
@@ -23,13 +23,19 @@ final class LiveCounters: @unchecked Sendable {
     private var _isPrefilling: Bool = false
     private var _isGenerating: Bool = false
     private var _contextMax: Int = 0
+    private var _currentPhaseElapsed: TimeInterval = 0
 
     // Cumulative
     private var _totalRequests: Int = 0
     private var _totalPromptTokens: Int = 0
     private var _totalGenerationTokens: Int = 0
+    private var _totalPreparingDuration: TimeInterval = 0
+    private var _totalSessionBuildDuration: TimeInterval = 0
+    private var _totalPrefillDuration: TimeInterval = 0
+    private var _totalGenerationDuration: TimeInterval = 0
 
     func requestStarted(requestId: String, contextLength: Int) {
+        let now = Date()
         lock.lock()
         _activeRequests += 1
         _preparingRequests += 1
@@ -40,33 +46,40 @@ final class LiveCounters: @unchecked Sendable {
         _generationTokens = 0
         _tokensPerSecond = 0
         _contextMax = contextLength
-        requestPhases[requestId] = .preparing
+        requestPhases[requestId] = RequestState(phase: .preparing, phaseStartedAt: now)
+        refreshCurrentPhaseElapsed(now: now)
         lock.unlock()
     }
 
     func requestPhaseChanged(requestId: String, phase: RequestPhase) {
+        let now = Date()
         lock.lock()
         if let current = requestPhases[requestId] {
-            decrementCount(for: current)
+            decrementCount(for: current.phase)
+            accumulateDuration(for: current.phase, elapsed: now.timeIntervalSince(current.phaseStartedAt))
         }
         incrementCount(for: phase)
-        requestPhases[requestId] = phase
+        requestPhases[requestId] = RequestState(phase: phase, phaseStartedAt: now)
         _isPrefilling = _prefillRequests > 0 || _sessionBuildRequests > 0 || _preparingRequests > 0
         _isGenerating = _generatingRequests > 0
+        refreshCurrentPhaseElapsed(now: now)
         lock.unlock()
     }
 
     func prefillCompleted(requestId: String, promptTokens: Int) {
+        let now = Date()
         lock.lock()
         if let current = requestPhases[requestId] {
-            decrementCount(for: current)
+            decrementCount(for: current.phase)
+            accumulateDuration(for: current.phase, elapsed: now.timeIntervalSince(current.phaseStartedAt))
         }
         incrementCount(for: .generating)
-        requestPhases[requestId] = .generating
+        requestPhases[requestId] = RequestState(phase: .generating, phaseStartedAt: now)
         _promptTokens = promptTokens
         _totalPromptTokens += promptTokens
         _isPrefilling = _prefillRequests > 0 || _sessionBuildRequests > 0 || _preparingRequests > 0
         _isGenerating = _generatingRequests > 0
+        refreshCurrentPhaseElapsed(now: now)
         lock.unlock()
     }
 
@@ -78,9 +91,11 @@ final class LiveCounters: @unchecked Sendable {
     }
 
     func requestCompleted(requestId: String, generationTokens: Int) {
+        let now = Date()
         lock.lock()
         if let current = requestPhases.removeValue(forKey: requestId) {
-            decrementCount(for: current)
+            decrementCount(for: current.phase)
+            accumulateDuration(for: current.phase, elapsed: now.timeIntervalSince(current.phaseStartedAt))
         }
         _activeRequests = max(0, _activeRequests - 1)
         _totalGenerationTokens += generationTokens
@@ -92,6 +107,7 @@ final class LiveCounters: @unchecked Sendable {
             _isPrefilling = _prefillRequests > 0 || _sessionBuildRequests > 0 || _preparingRequests > 0
             _isGenerating = _generatingRequests > 0
         }
+        refreshCurrentPhaseElapsed(now: now)
         lock.unlock()
     }
 
@@ -109,15 +125,22 @@ final class LiveCounters: @unchecked Sendable {
         _isPrefilling = false
         _isGenerating = false
         _contextMax = 0
+        _currentPhaseElapsed = 0
         _totalRequests = 0
         _totalPromptTokens = 0
         _totalGenerationTokens = 0
+        _totalPreparingDuration = 0
+        _totalSessionBuildDuration = 0
+        _totalPrefillDuration = 0
+        _totalGenerationDuration = 0
         lock.unlock()
     }
 
     /// Atomic snapshot for the UI timer.
     func snapshot() -> Snapshot {
+        let now = Date()
         lock.lock()
+        refreshCurrentPhaseElapsed(now: now)
         let s = Snapshot(
             activeRequests: _activeRequests,
             preparingRequests: _preparingRequests,
@@ -130,9 +153,14 @@ final class LiveCounters: @unchecked Sendable {
             isPrefilling: _isPrefilling,
             isGenerating: _isGenerating,
             contextMax: _contextMax,
+            currentPhaseElapsed: _currentPhaseElapsed,
             totalRequests: _totalRequests,
             totalPromptTokens: _totalPromptTokens,
-            totalGenerationTokens: _totalGenerationTokens
+            totalGenerationTokens: _totalGenerationTokens,
+            totalPreparingDuration: _totalPreparingDuration,
+            totalSessionBuildDuration: _totalSessionBuildDuration,
+            totalPrefillDuration: _totalPrefillDuration,
+            totalGenerationDuration: _totalGenerationDuration
         )
         lock.unlock()
         return s
@@ -150,9 +178,14 @@ final class LiveCounters: @unchecked Sendable {
         let isPrefilling: Bool
         let isGenerating: Bool
         let contextMax: Int
+        let currentPhaseElapsed: TimeInterval
         let totalRequests: Int
         let totalPromptTokens: Int
         let totalGenerationTokens: Int
+        let totalPreparingDuration: TimeInterval
+        let totalSessionBuildDuration: TimeInterval
+        let totalPrefillDuration: TimeInterval
+        let totalGenerationDuration: TimeInterval
     }
 
     private func incrementCount(for phase: RequestPhase) {
@@ -179,6 +212,28 @@ final class LiveCounters: @unchecked Sendable {
         case .generating:
             _generatingRequests = max(0, _generatingRequests - 1)
         }
+    }
+
+    private func accumulateDuration(for phase: RequestPhase, elapsed: TimeInterval) {
+        switch phase {
+        case .preparing:
+            _totalPreparingDuration += elapsed
+        case .sessionBuild:
+            _totalSessionBuildDuration += elapsed
+        case .prefilling:
+            _totalPrefillDuration += elapsed
+        case .generating:
+            _totalGenerationDuration += elapsed
+        }
+    }
+
+    private func refreshCurrentPhaseElapsed(now: Date) {
+        _currentPhaseElapsed = requestPhases.values.map { now.timeIntervalSince($0.phaseStartedAt) }.max() ?? 0
+    }
+
+    private struct RequestState {
+        var phase: RequestPhase
+        var phaseStartedAt: Date
     }
 
     enum RequestPhase {
@@ -208,6 +263,7 @@ final class InferenceStats {
     var currentTokensPerSecond: Double = 0
     var contextUsed: Int = 0
     var contextMax: Int = 0
+    var currentPhaseElapsed: TimeInterval = 0
 
     // MARK: - Cumulative counters
 
@@ -219,6 +275,10 @@ final class InferenceStats {
     var totalCacheEvictions: Int = 0
     var totalCacheReusePromptTokens: Int = 0
     var totalCacheRebuildPromptTokens: Int = 0
+    var totalPreparingDuration: TimeInterval = 0
+    var totalSessionBuildDuration: TimeInterval = 0
+    var totalPrefillDuration: TimeInterval = 0
+    var totalGenerationDuration: TimeInterval = 0
 
     // MARK: - Cache state
 
@@ -246,6 +306,9 @@ final class InferenceStats {
     private(set) var cacheFootprintHistory: [DataPoint] = []
     private(set) var cacheReuseHistory: [DataPoint] = []
     private(set) var cacheRebuildHistory: [DataPoint] = []
+    private(set) var currentPhaseElapsedHistory: [DataPoint] = []
+    private(set) var prefillDurationHistory: [DataPoint] = []
+    private(set) var sessionBuildDurationHistory: [DataPoint] = []
 
     private static let maxHistoryPoints = 120 // ~2 minutes at 1Hz
 
@@ -255,6 +318,8 @@ final class InferenceStats {
     private var lastPromptTokenCount: Int = 0
     private var lastCacheReuseTokenCount: Int = 0
     private var lastCacheRebuildTokenCount: Int = 0
+    private var lastPrefillDuration: TimeInterval = 0
+    private var lastSessionBuildDuration: TimeInterval = 0
 
     func startSampling() {
         guard sampleTimer == nil else { return }
@@ -287,9 +352,14 @@ final class InferenceStats {
         isGenerating = snap.isGenerating
         contextMax = snap.contextMax
         contextUsed = snap.promptTokens + snap.generationTokens
+        currentPhaseElapsed = snap.currentPhaseElapsed
         totalRequests = snap.totalRequests
         totalPromptTokens = snap.totalPromptTokens
         totalGenerationTokens = snap.totalGenerationTokens
+        totalPreparingDuration = snap.totalPreparingDuration
+        totalSessionBuildDuration = snap.totalSessionBuildDuration
+        totalPrefillDuration = snap.totalPrefillDuration
+        totalGenerationDuration = snap.totalGenerationDuration
         totalCacheHits = cache.totalHits
         totalCacheMisses = cache.totalMisses
         totalCacheEvictions = cache.totalEvictions
@@ -308,10 +378,14 @@ final class InferenceStats {
         let promptDelta = snap.totalPromptTokens - lastPromptTokenCount
         let cacheReuseDelta = cache.totalReusePromptTokens - lastCacheReuseTokenCount
         let cacheRebuildDelta = cache.totalRebuildPromptTokens - lastCacheRebuildTokenCount
+        let prefillDurationDelta = snap.totalPrefillDuration - lastPrefillDuration
+        let sessionBuildDurationDelta = snap.totalSessionBuildDuration - lastSessionBuildDuration
         lastGenerationTokenCount = snap.totalGenerationTokens
         lastPromptTokenCount = snap.totalPromptTokens
         lastCacheReuseTokenCount = cache.totalReusePromptTokens
         lastCacheRebuildTokenCount = cache.totalRebuildPromptTokens
+        lastPrefillDuration = snap.totalPrefillDuration
+        lastSessionBuildDuration = snap.totalSessionBuildDuration
 
         tokenRateHistory.append(DataPoint(timestamp: now, value: snap.tokensPerSecond))
         generationTokenHistory.append(DataPoint(timestamp: now, value: Double(genDelta)))
@@ -321,6 +395,9 @@ final class InferenceStats {
         cacheFootprintHistory.append(DataPoint(timestamp: now, value: Double(cache.estimatedBytes)))
         cacheReuseHistory.append(DataPoint(timestamp: now, value: Double(cacheReuseDelta)))
         cacheRebuildHistory.append(DataPoint(timestamp: now, value: Double(cacheRebuildDelta)))
+        currentPhaseElapsedHistory.append(DataPoint(timestamp: now, value: snap.currentPhaseElapsed))
+        prefillDurationHistory.append(DataPoint(timestamp: now, value: prefillDurationDelta))
+        sessionBuildDurationHistory.append(DataPoint(timestamp: now, value: sessionBuildDurationDelta))
 
         if tokenRateHistory.count > Self.maxHistoryPoints {
             tokenRateHistory.removeFirst(tokenRateHistory.count - Self.maxHistoryPoints)
@@ -346,6 +423,15 @@ final class InferenceStats {
         if cacheRebuildHistory.count > Self.maxHistoryPoints {
             cacheRebuildHistory.removeFirst(cacheRebuildHistory.count - Self.maxHistoryPoints)
         }
+        if currentPhaseElapsedHistory.count > Self.maxHistoryPoints {
+            currentPhaseElapsedHistory.removeFirst(currentPhaseElapsedHistory.count - Self.maxHistoryPoints)
+        }
+        if prefillDurationHistory.count > Self.maxHistoryPoints {
+            prefillDurationHistory.removeFirst(prefillDurationHistory.count - Self.maxHistoryPoints)
+        }
+        if sessionBuildDurationHistory.count > Self.maxHistoryPoints {
+            sessionBuildDurationHistory.removeFirst(sessionBuildDurationHistory.count - Self.maxHistoryPoints)
+        }
     }
 
     func reset() {
@@ -363,9 +449,14 @@ final class InferenceStats {
         currentTokensPerSecond = 0
         contextUsed = 0
         contextMax = 0
+        currentPhaseElapsed = 0
         totalRequests = 0
         totalPromptTokens = 0
         totalGenerationTokens = 0
+        totalPreparingDuration = 0
+        totalSessionBuildDuration = 0
+        totalPrefillDuration = 0
+        totalGenerationDuration = 0
         totalCacheHits = 0
         totalCacheMisses = 0
         totalCacheEvictions = 0
@@ -386,9 +477,14 @@ final class InferenceStats {
         cacheFootprintHistory.removeAll()
         cacheReuseHistory.removeAll()
         cacheRebuildHistory.removeAll()
+        currentPhaseElapsedHistory.removeAll()
+        prefillDurationHistory.removeAll()
+        sessionBuildDurationHistory.removeAll()
         lastGenerationTokenCount = 0
         lastPromptTokenCount = 0
         lastCacheReuseTokenCount = 0
         lastCacheRebuildTokenCount = 0
+        lastPrefillDuration = 0
+        lastSessionBuildDuration = 0
     }
 }

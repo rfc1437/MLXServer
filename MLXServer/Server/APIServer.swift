@@ -393,7 +393,7 @@ final class APIServer {
         // Extract images from the last message only (ChatSession.streamDetails takes images separately)
         let lastImages = lastMessage.images
 
-        let result: (promptTokens: Int, completionTokens: Int, succeeded: Bool)
+        let result: (promptTokens: Int, completionTokens: Int, assistantHistoryText: String?, succeeded: Bool)
 
         if isStream {
             result = await handleStreamingResponse(
@@ -405,7 +405,8 @@ final class APIServer {
                 images: lastImages,
                 tools: request.tools,
                 created: created,
-                modelName: modelName
+                modelName: modelName,
+                isQwen: isQwen
             )
         } else {
             result = await handleNonStreamingResponse(
@@ -417,16 +418,23 @@ final class APIServer {
                 images: lastImages,
                 tools: request.tools,
                 created: created,
-                modelName: modelName
+                modelName: modelName,
+                isQwen: isQwen
             )
         }
 
         if result.succeeded {
+            var cachedSignatures = messageSignatures
+            if let assistantHistoryText = result.assistantHistoryText {
+                cachedSignatures.append(
+                    Self.messageSignature(role: .assistant, content: assistantHistoryText, imageURLs: [])
+                )
+            }
             ConversationSessionCache.shared.completeRequest(
                 entryId: lease.entryId,
                 session: session,
-                requestMessageSignatures: messageSignatures,
-                requestMessageCount: chatMessages.count,
+                requestMessageSignatures: cachedSignatures,
+                requestMessageCount: cachedSignatures.count,
                 estimatedPromptTokens: estimatedPromptTokens,
                 estimatedBytes: estimatedBytes,
                 promptTokens: result.promptTokens,
@@ -473,8 +481,9 @@ final class APIServer {
         images: [UserInput.Image],
         tools: [APIToolDefinition]?,
         created: Int,
-        modelName: String
-    ) async -> (promptTokens: Int, completionTokens: Int, succeeded: Bool) {
+        modelName: String,
+        isQwen: Bool
+    ) async -> (promptTokens: Int, completionTokens: Int, assistantHistoryText: String?, succeeded: Bool) {
         do {
             var fullText = ""
             var promptTokens = 0
@@ -510,48 +519,11 @@ final class APIServer {
                 }
             }
 
-            // Parse tool calls: first check framework-detected ones, then our own text parser
-            var finishReason = "stop"
-            var responseContent: String? = fullText
-            var apiToolCalls: [APIToolCall]? = nil
-
-            if !frameworkToolCalls.isEmpty {
-                // Framework natively detected tool calls (e.g. Qwen)
-                finishReason = "tool_calls"
-                apiToolCalls = frameworkToolCalls.enumerated().map { i, tc in
-                    let argsJSON: String
-                    let argsDict = tc.function.arguments.mapValues { $0.anyValue }
-                    if let data = try? JSONSerialization.data(withJSONObject: argsDict),
-                       let str = String(data: data, encoding: .utf8) {
-                        argsJSON = str
-                    } else {
-                        argsJSON = "{}"
-                    }
-                    let callId = String(format: "call_%d_%08d", i, abs(tc.function.name.hashValue) % 100_000_000)
-                    return APIToolCall(
-                        index: i,
-                        id: callId,
-                        type: "function",
-                        function: APIFunctionCall(name: tc.function.name, arguments: argsJSON)
-                    )
-                }
-                responseContent = fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : fullText
-            } else if let tools, !tools.isEmpty {
-                // Try our own text parser (e.g. Gemma tool_code blocks)
-                let (cleanText, parsedCalls) = ToolCallParser.parse(text: fullText, tools: tools)
-                if !parsedCalls.isEmpty {
-                    finishReason = "tool_calls"
-                    apiToolCalls = parsedCalls.enumerated().map { i, tc in
-                        APIToolCall(
-                            index: i,
-                            id: tc.id,
-                            type: "function",
-                            function: APIFunctionCall(name: tc.name, arguments: tc.arguments)
-                        )
-                    }
-                    responseContent = cleanText.isEmpty ? nil : cleanText
-                }
-            }
+            let resolved = Self.resolveAssistantResponse(
+                fullText: fullText,
+                frameworkToolCalls: frameworkToolCalls,
+                tools: tools
+            )
 
             let response = APIChatCompletionResponse(
                 id: requestId,
@@ -563,10 +535,10 @@ final class APIServer {
                         index: 0,
                         message: APIChoiceMessage(
                             role: "assistant",
-                            content: responseContent,
-                            tool_calls: apiToolCalls
+                            content: resolved.content,
+                            tool_calls: resolved.toolCalls
                         ),
-                        finish_reason: finishReason
+                        finish_reason: resolved.finishReason
                     )
                 ],
                 usage: APIUsageInfo(
@@ -579,10 +551,15 @@ final class APIServer {
             if let json = try? JSONEncoder().encode(response) {
                 sendResponse(connection: connection, status: 200, body: String(data: json, encoding: .utf8) ?? "{}")
             }
-            return (promptTokens, completionTokens, true)
+            let assistantHistoryText = Self.normalizedAssistantHistoryContent(
+                content: resolved.content,
+                toolCalls: resolved.toolCalls,
+                isQwen: isQwen
+            )
+            return (promptTokens, completionTokens, assistantHistoryText, true)
         } catch {
             sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
-            return (0, 0, false)
+            return (0, 0, nil, false)
         }
     }
 
@@ -597,8 +574,9 @@ final class APIServer {
         images: [UserInput.Image],
         tools: [APIToolDefinition]?,
         created: Int,
-        modelName: String
-    ) async -> (promptTokens: Int, completionTokens: Int, succeeded: Bool) {
+        modelName: String,
+        isQwen: Bool
+    ) async -> (promptTokens: Int, completionTokens: Int, assistantHistoryText: String?, succeeded: Bool) {
         // Send SSE headers
         let header = [
             "HTTP/1.1 200 OK",
@@ -657,50 +635,14 @@ final class APIServer {
             LiveCounters.shared.prefillCompleted(requestId: requestId, promptTokens: promptTokens)
         }
 
-        // Stats were already updated by LiveCounters inside the loop
+        let resolved = Self.resolveAssistantResponse(
+            fullText: fullText,
+            frameworkToolCalls: frameworkToolCalls,
+            tools: tools
+        )
 
-        // Post-generation: handle tool calls (framework-detected or text-parsed)
-        var finishReason = "stop"
-
-        if !frameworkToolCalls.isEmpty {
-            finishReason = "tool_calls"
-            for (i, tc) in frameworkToolCalls.enumerated() {
-                let argsDict = tc.function.arguments.mapValues { $0.anyValue }
-                let argsJSON: String
-                if let data = try? JSONSerialization.data(withJSONObject: argsDict),
-                   let str = String(data: data, encoding: .utf8) {
-                    argsJSON = str
-                } else {
-                    argsJSON = "{}"
-                }
-                let callId = String(format: "call_%d_%08d", i, abs(tc.function.name.hashValue) % 100_000_000)
-                let apiToolCall = APIToolCall(
-                    index: i,
-                    id: callId,
-                    type: "function",
-                    function: APIFunctionCall(name: tc.function.name, arguments: argsJSON)
-                )
-                await Self.sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
-                    id: requestId,
-                    object: "chat.completion.chunk",
-                    created: created,
-                    model: modelName,
-                    choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: nil, tool_calls: [apiToolCall]), finish_reason: nil)],
-                    usage: nil
-                ))
-            }
-        } else if hasTools {
-            let (_, parsed) = ToolCallParser.parse(text: fullText, tools: tools)
-            if !parsed.isEmpty {
-                finishReason = "tool_calls"
-            }
-            for (i, tc) in parsed.enumerated() {
-                let apiToolCall = APIToolCall(
-                    index: i,
-                    id: tc.id,
-                    type: "function",
-                    function: APIFunctionCall(name: tc.name, arguments: tc.arguments)
-                )
+        if let toolCalls = resolved.toolCalls {
+            for apiToolCall in toolCalls {
                 await Self.sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
                     id: requestId,
                     object: "chat.completion.chunk",
@@ -718,7 +660,7 @@ final class APIServer {
             object: "chat.completion.chunk",
             created: created,
             model: modelName,
-            choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: nil, tool_calls: nil), finish_reason: finishReason)],
+            choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: nil, tool_calls: nil), finish_reason: resolved.finishReason)],
             usage: APIUsageInfo(
                 prompt_tokens: promptTokens,
                 completion_tokens: completionTokens,
@@ -729,7 +671,12 @@ final class APIServer {
         // Send [DONE] and close
         await Self.sendData(connection: connection, data: "data: [DONE]\n\n".data(using: .utf8)!)
         connection.cancel()
-        return (promptTokens, completionTokens, succeeded)
+        let assistantHistoryText = Self.normalizedAssistantHistoryContent(
+            content: resolved.content,
+            toolCalls: resolved.toolCalls,
+            isQwen: isQwen
+        )
+        return (promptTokens, completionTokens, assistantHistoryText, succeeded)
     }
 
     /// Run the token generation + SSE send loop entirely off MainActor.
@@ -875,6 +822,68 @@ final class APIServer {
         }
 
         return hash
+    }
+
+    private static func normalizedAssistantHistoryContent(
+        content: String?,
+        toolCalls: [APIToolCall]?,
+        isQwen: Bool
+    ) -> String? {
+        var text = content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if let toolCalls, !toolCalls.isEmpty {
+            let formattedCalls = isQwen
+                ? ToolPromptBuilder.formatQwenToolCalls(toolCalls)
+                : ToolPromptBuilder.formatGemmaToolCalls(toolCalls)
+            text = text.isEmpty ? formattedCalls : text + "\n" + formattedCalls
+        }
+        return text.isEmpty ? nil : text
+    }
+
+    private static func resolveAssistantResponse(
+        fullText: String,
+        frameworkToolCalls: [MLXLMCommon.ToolCall],
+        tools: [APIToolDefinition]?
+    ) -> (content: String?, toolCalls: [APIToolCall]?, finishReason: String) {
+        var finishReason = "stop"
+        var responseContent: String? = fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : fullText
+        var apiToolCalls: [APIToolCall]? = nil
+
+        if !frameworkToolCalls.isEmpty {
+            finishReason = "tool_calls"
+            apiToolCalls = frameworkToolCalls.enumerated().map { i, tc in
+                let argsJSON: String
+                let argsDict = tc.function.arguments.mapValues { $0.anyValue }
+                if let data = try? JSONSerialization.data(withJSONObject: argsDict),
+                   let str = String(data: data, encoding: .utf8) {
+                    argsJSON = str
+                } else {
+                    argsJSON = "{}"
+                }
+                let callId = String(format: "call_%d_%08d", i, abs(tc.function.name.hashValue) % 100_000_000)
+                return APIToolCall(
+                    index: i,
+                    id: callId,
+                    type: "function",
+                    function: APIFunctionCall(name: tc.function.name, arguments: argsJSON)
+                )
+            }
+        } else if let tools, !tools.isEmpty {
+            let (cleanText, parsedCalls) = ToolCallParser.parse(text: fullText, tools: tools)
+            if !parsedCalls.isEmpty {
+                finishReason = "tool_calls"
+                apiToolCalls = parsedCalls.enumerated().map { i, tc in
+                    APIToolCall(
+                        index: i,
+                        id: tc.id,
+                        type: "function",
+                        function: APIFunctionCall(name: tc.name, arguments: tc.arguments)
+                    )
+                }
+                responseContent = cleanText.isEmpty ? nil : cleanText
+            }
+        }
+
+        return (responseContent, apiToolCalls, finishReason)
     }
 }
 
