@@ -2573,17 +2573,17 @@ Validation note: `PromptBuilder.swift` is now covered by both shaping-parity uni
 ### Phase 3: Integration
 
 7. [x] **`APIServer.swift` rewrite** — Wire everything together. Replace ChatSession with InferenceEngine, ConversationSessionCache with TokenPrefixCache, add PromptBuilder and StreamingSSEEncoder.
-8. **Delete `ConversationSessionCache.swift`** — Only after APIServer is fully migrated and tested.
+8. [x] **Delete `ConversationSessionCache.swift`** — Only after APIServer is fully migrated and tested.
 
 Validation note: `APIServer.swift` now routes the API path through `PromptBuilder`, `InferenceEngine`, `TokenPrefixCache`, and `StreamingSSEEncoder`, and the full repository test workflow is green. Image-bearing requests intentionally bypass prefix-cache reuse for now until image fingerprinting is implemented.
 
 ### Phase 4: Statistics & Monitoring
 
-9. **LiveCounters upgrade** — Add TTFT, prefill tok/s, cache match depth, vision time, disconnect tracking. Wire up new reporting calls in APIServer.
+9. [x] **LiveCounters upgrade** — Add TTFT, prefill tok/s, cache match depth, vision time, disconnect tracking. Wire up new reporting calls in APIServer.
 10. [x] **InferenceStats upgrade** — Add new snapshot fields, new time-series histories. Switch from ConversationSessionCache.snapshot() to TokenPrefixCache.snapshot().
 11. [x] **MonitorView upgrade** — Add TTFT chart, prefill speed chart, cache match quality chart, cache memory budget chart. Update cache card and cumulative tiles. Add vision encoder time chart (conditional on VL model). Replace session list with cache entry list.
 
-Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly and `MonitorView.swift` has been rebuilt around current system state and prefix-cache visibility rather than session-era charts. The dashboard now exposes cache match quality from matched-vs-rebuilt prompt token counters, but it still does not expose TTFT, cache match depth, or vision timing because those `LiveCounters` signals have not been implemented yet.
+Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly and `MonitorView.swift` now surfaces TTFT, prefill speed, cache match depth, cache memory pressure, disconnect totals, and vision prepare time from `LiveCounters`. Match-type hit breakdown is still open because it depends on the advanced cache matching work in Phase 5.
 
 ### Phase 5: Advanced Cache Matching
 
@@ -2608,10 +2608,10 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Cache Correctness
 
-- [ ] Cold start: no cache entries → fresh generation works
+- [x] Cold start: no cache entries → fresh generation works
 - [ ] Second identical request → full cache hit, zero prefill tokens
 - [ ] Conversation continuation (add 1 message) → partial cache hit
-- [ ] Conversation continuation (add 2+ messages, e.g. tool-use flow) → partial cache hit (not a miss!)
+- [x] Conversation continuation (add 2+ messages, e.g. tool-use flow) → partial cache hit (not a miss!)
 - [ ] Same system prompt, different user message → system prompt prefix cached and reused
 - [ ] Different system prompt → no false cache hit
 - [ ] Model swap → cache invalidated, fresh generation works
@@ -2622,31 +2622,31 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 - [ ] Memory budget computed correctly from Metal device
 - [x] Entries evicted under memory pressure (oldest first)
 - [x] Expired entries pruned after 30 min idle
-- [ ] Trie nodes cleaned up when entries are evicted (no memory leak)
+- [x] Trie nodes cleaned up when entries are evicted (no memory leak)
 - [ ] `snapshot()` reports accurate memory usage and hit rates
 
 ### Disconnect Handling
 
 - [ ] Client disconnects mid-stream → generation stops within ~200ms
-- [ ] Partial KV cache from disconnected request is still stored for reuse
+- [x] Partial KV cache from disconnected request is still stored for reuse
 - [ ] No Metal assertion failures on disconnect
 
 ### Streaming
 
-- [ ] SSE JSON is valid and parseable by standard clients
+- [x] SSE JSON is valid and parseable by standard clients
 - [x] `StreamingSSEEncoder` output matches `JSONEncoder` output byte-for-byte (for content deltas)
-- [ ] Role delta sent once at stream start
-- [ ] Tool call chunks sent correctly
-- [ ] Final chunk has finish_reason and usage stats
-- [ ] `data: [DONE]` sent at end
+- [x] Role delta sent once at stream start
+- [x] Tool call chunks sent correctly
+- [x] Final chunk has finish_reason and usage stats
+- [x] `data: [DONE]` sent at end
 
 ### Tool Use
 
 - [ ] Gemma tool_code blocks parsed correctly
 - [ ] Qwen `<tool_call>` tags parsed correctly
 - [ ] Framework `ToolCall` events handled correctly
-- [ ] Tool results round-trip correctly (user sends tool result → model sees it in context)
-- [ ] finish_reason is "tool_calls" when tools are invoked
+- [x] Tool results round-trip correctly (user sends tool result → model sees it in context)
+- [x] finish_reason is "tool_calls" when tools are invoked
 
 ### Vision-Language Models
 
@@ -2694,7 +2694,7 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Thinking Mode
 
-- [ ] `enable_thinking: false` passed through to template correctly
+- [x] `enable_thinking: false` passed through to template correctly
 - [ ] Thinking mode on: `<think>` blocks appear in output
 - [ ] Thinking mode off: no `<think>` blocks
 
@@ -2702,7 +2702,7 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 - [ ] `GET /health` → `{"status":"ok"}`
 - [ ] `GET /v1/models` → model list with context windows
-- [ ] Non-streaming `POST /v1/chat/completions` → full response
-- [ ] Streaming `POST /v1/chat/completions` → SSE stream
+- [x] Non-streaming `POST /v1/chat/completions` → full response
+- [x] Streaming `POST /v1/chat/completions` → SSE stream
 - [ ] Model field in request triggers model swap
 - [ ] UI chat (ChatViewModel) completely unaffected

@@ -28,6 +28,7 @@
 		5C1E8FE1C521914CEF98D3AA /* ChatMessagesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB1A5E8B1C9F2BC4D262C53A /* ChatMessagesView.swift */; };
 		621B7E4382199AC1378F5F9C /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0EAB35D7130D56B9E7484BA /* StatusBarView.swift */; };
 		67262C5E24739F1FE0011439 /* StreamingSSEEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615F8A7C9ABCADEB215D31BD /* StreamingSSEEncoder.swift */; };
+		67B815DC3304BF4B2E9974A8 /* LiveCountersTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E7DF9F68C10C718844B7B01 /* LiveCountersTests.swift */; };
 		6828CCA8B78AB40906F87CAB /* LocalModelResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = D733A0D1D4AC25DDDA6C8684 /* LocalModelResolver.swift */; };
 		741692862DB1F13EA0B2D14D /* TokenPrefixCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1962D530BEABCC7F1E8E0ED1 /* TokenPrefixCache.swift */; };
 		7CD765C1E2F9F4D7504C8D09 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B629DA084A9A40E54F8EA5FA /* Assets.xcassets */; };
@@ -95,6 +96,7 @@
 		6B3AA91D2C7842D7366F9A41 /* ChatDocumentPackage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDocumentPackage.swift; sourceTree = "<group>"; };
 		6EE59189918D06B8D2F588FC /* MLXServer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MLXServer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7C1A89C076E717F87A60397D /* ImageDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDecoder.swift; sourceTree = "<group>"; };
+		7E7DF9F68C10C718844B7B01 /* LiveCountersTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveCountersTests.swift; sourceTree = "<group>"; };
 		922CBDC9206737BD04AF2874 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
 		944C699FBB76C734C9DF2F2E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A4B359324B5FD8D106C74338 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
@@ -175,6 +177,7 @@
 				E43535D68448F1752D91C3A9 /* APIServerRewriteTests.swift */,
 				FEFF6168B2283FEC87B4BB8C /* CancellationTokenTests.swift */,
 				E4573DC9314915F4C7963B4E /* ImageDecoderTests.swift */,
+				7E7DF9F68C10C718844B7B01 /* LiveCountersTests.swift */,
 				D388BE00B42C06ED9D9905BF /* ModelBackedInferenceValidationTests.swift */,
 				5F9426FA5A4AC55F8D9C080E /* PromptBuilderTests.swift */,
 				49C383DD5224F3420EB98DB2 /* StreamingSSEEncoderTests.swift */,
@@ -382,6 +385,7 @@
 				CBC9DB0799C4ADF2DC9319DA /* APIServerRewriteTests.swift in Sources */,
 				962083CCCC4AC848E0BBBC99 /* CancellationTokenTests.swift in Sources */,
 				E92B6656C251EDA246B8F582 /* ImageDecoderTests.swift in Sources */,
+				67B815DC3304BF4B2E9974A8 /* LiveCountersTests.swift in Sources */,
 				8E665E21CCCD87A907CEA78D /* ModelBackedInferenceValidationTests.swift in Sources */,
 				1FE8C624898960ECCE39C0D4 /* PromptBuilderTests.swift in Sources */,
 				FE4405F66873C75CD6FA19A5 /* StreamingSSEEncoderTests.swift in Sources */,

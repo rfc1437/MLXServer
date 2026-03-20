@@ -20,12 +20,16 @@ final class LiveCounters: @unchecked Sendable {
     private var _promptTokens: Int = 0
     private var _generationTokens: Int = 0
     private var _tokensPerSecond: Double = 0
+    private var _prefillTokensPerSecond: Double = 0
+    private var _timeToFirstToken: TimeInterval = 0
     private var _isPrefilling: Bool = false
     private var _isGenerating: Bool = false
     private var _contextMax: Int = 0
     private var _currentPhaseElapsed: TimeInterval = 0
     private var _currentCacheMatchedPromptTokens: Int = 0
     private var _currentCacheRebuiltPromptTokens: Int = 0
+    private var _cacheMatchDepth: Int = 0
+    private var _visionEncoderTime: TimeInterval = 0
 
     // Cumulative
     private var _totalRequests: Int = 0
@@ -37,6 +41,8 @@ final class LiveCounters: @unchecked Sendable {
     private var _totalSessionBuildDuration: TimeInterval = 0
     private var _totalPrefillDuration: TimeInterval = 0
     private var _totalGenerationDuration: TimeInterval = 0
+    private var _totalVisionEncoderDuration: TimeInterval = 0
+    private var _totalDisconnects: Int = 0
 
     func requestStarted(requestId: String, contextLength: Int) {
         let now = Date()
@@ -49,8 +55,16 @@ final class LiveCounters: @unchecked Sendable {
         _promptTokens = 0
         _generationTokens = 0
         _tokensPerSecond = 0
+        _prefillTokensPerSecond = 0
+        _timeToFirstToken = 0
         _contextMax = contextLength
-        requestPhases[requestId] = RequestState(phase: .preparing, phaseStartedAt: now)
+        _cacheMatchDepth = 0
+        _visionEncoderTime = 0
+        requestPhases[requestId] = RequestState(
+            phase: .preparing,
+            phaseStartedAt: now,
+            requestStartedAt: now
+        )
         refreshCurrentPhaseElapsed(now: now)
         lock.unlock()
     }
@@ -61,9 +75,24 @@ final class LiveCounters: @unchecked Sendable {
         if let current = requestPhases[requestId] {
             decrementCount(for: current.phase)
             accumulateDuration(for: current.phase, elapsed: now.timeIntervalSince(current.phaseStartedAt))
+            requestPhases[requestId] = RequestState(
+                phase: phase,
+                phaseStartedAt: now,
+                requestStartedAt: current.requestStartedAt,
+                matchedPromptTokens: current.matchedPromptTokens,
+                rebuiltPromptTokens: current.rebuiltPromptTokens,
+                hasRecordedFirstToken: current.hasRecordedFirstToken,
+                disconnectRecorded: current.disconnectRecorded,
+                visionEncoderTime: current.visionEncoderTime
+            )
+        } else {
+            requestPhases[requestId] = RequestState(
+                phase: phase,
+                phaseStartedAt: now,
+                requestStartedAt: now
+            )
         }
         incrementCount(for: phase)
-        requestPhases[requestId] = RequestState(phase: phase, phaseStartedAt: now)
         _isPrefilling = _prefillRequests > 0 || _sessionBuildRequests > 0 || _preparingRequests > 0
         _isGenerating = _generatingRequests > 0
         refreshCurrentPhaseElapsed(now: now)
@@ -74,16 +103,38 @@ final class LiveCounters: @unchecked Sendable {
         let now = Date()
         lock.lock()
         if let current = requestPhases[requestId] {
+            let prefillElapsed = max(now.timeIntervalSince(current.phaseStartedAt), 0)
+            _prefillTokensPerSecond = prefillElapsed > 0
+                ? Double(promptTokens) / prefillElapsed
+                : 0
             decrementCount(for: current.phase)
-            accumulateDuration(for: current.phase, elapsed: now.timeIntervalSince(current.phaseStartedAt))
+            accumulateDuration(for: current.phase, elapsed: prefillElapsed)
         }
         incrementCount(for: .generating)
-        requestPhases[requestId] = RequestState(phase: .generating, phaseStartedAt: now)
+        if var state = requestPhases[requestId] {
+            state.phase = .generating
+            state.phaseStartedAt = now
+            requestPhases[requestId] = state
+        }
         _promptTokens = promptTokens
         _totalPromptTokens += promptTokens
         _isPrefilling = _prefillRequests > 0 || _sessionBuildRequests > 0 || _preparingRequests > 0
         _isGenerating = _generatingRequests > 0
         refreshCurrentPhaseElapsed(now: now)
+        lock.unlock()
+    }
+
+    func firstTokenGenerated(requestId: String) {
+        let now = Date()
+        lock.lock()
+        guard var state = requestPhases[requestId], !state.hasRecordedFirstToken else {
+            lock.unlock()
+            return
+        }
+
+        state.hasRecordedFirstToken = true
+        requestPhases[requestId] = state
+        _timeToFirstToken = max(now.timeIntervalSince(state.requestStartedAt), 0)
         lock.unlock()
     }
 
@@ -106,11 +157,40 @@ final class LiveCounters: @unchecked Sendable {
 
         _totalCacheReusePromptTokens += matched
         _totalCacheRebuildPromptTokens += rebuilt
+        _cacheMatchDepth = matched
 
         state.matchedPromptTokens = matched
         state.rebuiltPromptTokens = rebuilt
         requestPhases[requestId] = state
         refreshCurrentCachePromptStatsLocked()
+        lock.unlock()
+    }
+
+    func visionProcessingCompleted(requestId: String, duration: TimeInterval) {
+        let clampedDuration = max(duration, 0)
+        lock.lock()
+        guard var state = requestPhases[requestId] else {
+            lock.unlock()
+            return
+        }
+
+        _visionEncoderTime = clampedDuration
+        _totalVisionEncoderDuration += clampedDuration
+        state.visionEncoderTime = clampedDuration
+        requestPhases[requestId] = state
+        lock.unlock()
+    }
+
+    func disconnectDetected(requestId: String) {
+        lock.lock()
+        guard var state = requestPhases[requestId], !state.disconnectRecorded else {
+            lock.unlock()
+            return
+        }
+
+        state.disconnectRecorded = true
+        requestPhases[requestId] = state
+        _totalDisconnects += 1
         lock.unlock()
     }
 
@@ -147,12 +227,16 @@ final class LiveCounters: @unchecked Sendable {
         _promptTokens = 0
         _generationTokens = 0
         _tokensPerSecond = 0
+        _prefillTokensPerSecond = 0
+        _timeToFirstToken = 0
         _isPrefilling = false
         _isGenerating = false
         _contextMax = 0
         _currentPhaseElapsed = 0
         _currentCacheMatchedPromptTokens = 0
         _currentCacheRebuiltPromptTokens = 0
+        _cacheMatchDepth = 0
+        _visionEncoderTime = 0
         _totalRequests = 0
         _totalPromptTokens = 0
         _totalGenerationTokens = 0
@@ -162,6 +246,8 @@ final class LiveCounters: @unchecked Sendable {
         _totalSessionBuildDuration = 0
         _totalPrefillDuration = 0
         _totalGenerationDuration = 0
+        _totalVisionEncoderDuration = 0
+        _totalDisconnects = 0
         lock.unlock()
     }
 
@@ -179,12 +265,16 @@ final class LiveCounters: @unchecked Sendable {
             promptTokens: _promptTokens,
             generationTokens: _generationTokens,
             tokensPerSecond: _tokensPerSecond,
+            prefillTokensPerSecond: _prefillTokensPerSecond,
+            timeToFirstToken: _timeToFirstToken,
             isPrefilling: _isPrefilling,
             isGenerating: _isGenerating,
             contextMax: _contextMax,
             currentPhaseElapsed: _currentPhaseElapsed,
             currentCacheMatchedPromptTokens: _currentCacheMatchedPromptTokens,
             currentCacheRebuiltPromptTokens: _currentCacheRebuiltPromptTokens,
+            cacheMatchDepth: _cacheMatchDepth,
+            visionEncoderTime: _visionEncoderTime,
             totalRequests: _totalRequests,
             totalPromptTokens: _totalPromptTokens,
             totalGenerationTokens: _totalGenerationTokens,
@@ -193,7 +283,9 @@ final class LiveCounters: @unchecked Sendable {
             totalPreparingDuration: _totalPreparingDuration,
             totalSessionBuildDuration: _totalSessionBuildDuration,
             totalPrefillDuration: _totalPrefillDuration,
-            totalGenerationDuration: _totalGenerationDuration
+            totalGenerationDuration: _totalGenerationDuration,
+            totalVisionEncoderDuration: _totalVisionEncoderDuration,
+            totalDisconnects: _totalDisconnects
         )
         lock.unlock()
         return s
@@ -208,12 +300,16 @@ final class LiveCounters: @unchecked Sendable {
         let promptTokens: Int
         let generationTokens: Int
         let tokensPerSecond: Double
+        let prefillTokensPerSecond: Double
+        let timeToFirstToken: TimeInterval
         let isPrefilling: Bool
         let isGenerating: Bool
         let contextMax: Int
         let currentPhaseElapsed: TimeInterval
         let currentCacheMatchedPromptTokens: Int
         let currentCacheRebuiltPromptTokens: Int
+        let cacheMatchDepth: Int
+        let visionEncoderTime: TimeInterval
         let totalRequests: Int
         let totalPromptTokens: Int
         let totalGenerationTokens: Int
@@ -223,6 +319,8 @@ final class LiveCounters: @unchecked Sendable {
         let totalSessionBuildDuration: TimeInterval
         let totalPrefillDuration: TimeInterval
         let totalGenerationDuration: TimeInterval
+        let totalVisionEncoderDuration: TimeInterval
+        let totalDisconnects: Int
     }
 
     private func incrementCount(for phase: RequestPhase) {
@@ -276,8 +374,12 @@ final class LiveCounters: @unchecked Sendable {
     private struct RequestState {
         var phase: RequestPhase
         var phaseStartedAt: Date
+        var requestStartedAt: Date
         var matchedPromptTokens: Int = 0
         var rebuiltPromptTokens: Int = 0
+        var hasRecordedFirstToken: Bool = false
+        var disconnectRecorded: Bool = false
+        var visionEncoderTime: TimeInterval = 0
     }
 
     enum RequestPhase {
@@ -305,11 +407,15 @@ final class InferenceStats {
     var isGenerating: Bool = false
     var isPrefilling: Bool = false
     var currentTokensPerSecond: Double = 0
+    var prefillTokensPerSecond: Double = 0
+    var timeToFirstToken: TimeInterval = 0
     var contextUsed: Int = 0
     var contextMax: Int = 0
     var currentPhaseElapsed: TimeInterval = 0
     var currentCacheMatchedPromptTokens: Int = 0
     var currentCacheRebuiltPromptTokens: Int = 0
+    var cacheMatchDepth: Int = 0
+    var visionEncoderTime: TimeInterval = 0
 
     // MARK: - Cumulative counters
 
@@ -326,6 +432,8 @@ final class InferenceStats {
     var totalSessionBuildDuration: TimeInterval = 0
     var totalPrefillDuration: TimeInterval = 0
     var totalGenerationDuration: TimeInterval = 0
+    var totalVisionEncoderDuration: TimeInterval = 0
+    var totalDisconnects: Int = 0
 
     // MARK: - Cache state
 
@@ -356,6 +464,10 @@ final class InferenceStats {
     private(set) var cacheReusePromptHistory: [DataPoint] = []
     private(set) var cacheRebuildPromptHistory: [DataPoint] = []
     private(set) var cacheMatchQualityHistory: [DataPoint] = []
+    private(set) var ttftHistory: [DataPoint] = []
+    private(set) var prefillSpeedHistory: [DataPoint] = []
+    private(set) var cacheMatchDepthHistory: [DataPoint] = []
+    private(set) var visionTimeHistory: [DataPoint] = []
 
     private static let maxHistoryPoints = 120 // ~2 minutes at 1Hz
 
@@ -394,6 +506,8 @@ final class InferenceStats {
         currentPromptTokens = snap.promptTokens
         currentGenerationTokens = snap.generationTokens
         currentTokensPerSecond = snap.tokensPerSecond
+        prefillTokensPerSecond = snap.prefillTokensPerSecond
+        timeToFirstToken = snap.timeToFirstToken
         isPrefilling = snap.isPrefilling
         isGenerating = snap.isGenerating
         contextMax = snap.contextMax
@@ -401,6 +515,8 @@ final class InferenceStats {
         currentPhaseElapsed = snap.currentPhaseElapsed
         currentCacheMatchedPromptTokens = snap.currentCacheMatchedPromptTokens
         currentCacheRebuiltPromptTokens = snap.currentCacheRebuiltPromptTokens
+        cacheMatchDepth = snap.cacheMatchDepth
+        visionEncoderTime = snap.visionEncoderTime
         totalRequests = snap.totalRequests
         totalPromptTokens = snap.totalPromptTokens
         totalGenerationTokens = snap.totalGenerationTokens
@@ -410,6 +526,8 @@ final class InferenceStats {
         totalSessionBuildDuration = snap.totalSessionBuildDuration
         totalPrefillDuration = snap.totalPrefillDuration
         totalGenerationDuration = snap.totalGenerationDuration
+        totalVisionEncoderDuration = snap.totalVisionEncoderDuration
+        totalDisconnects = snap.totalDisconnects
         totalCacheHits = cache.totalHits
         totalCacheMisses = cache.totalMisses
         totalCacheEvictions = cache.totalEvictions
@@ -448,6 +566,10 @@ final class InferenceStats {
         cacheReusePromptHistory.append(DataPoint(timestamp: now, value: Double(cacheReusePromptDelta)))
         cacheRebuildPromptHistory.append(DataPoint(timestamp: now, value: Double(cacheRebuildPromptDelta)))
         cacheMatchQualityHistory.append(DataPoint(timestamp: now, value: cacheMatchQualityDelta))
+        ttftHistory.append(DataPoint(timestamp: now, value: snap.timeToFirstToken * 1_000))
+        prefillSpeedHistory.append(DataPoint(timestamp: now, value: snap.prefillTokensPerSecond))
+        cacheMatchDepthHistory.append(DataPoint(timestamp: now, value: Double(snap.cacheMatchDepth)))
+        visionTimeHistory.append(DataPoint(timestamp: now, value: snap.visionEncoderTime * 1_000))
 
         if tokenRateHistory.count > Self.maxHistoryPoints {
             tokenRateHistory.removeFirst(tokenRateHistory.count - Self.maxHistoryPoints)
@@ -485,6 +607,18 @@ final class InferenceStats {
         if cacheMatchQualityHistory.count > Self.maxHistoryPoints {
             cacheMatchQualityHistory.removeFirst(cacheMatchQualityHistory.count - Self.maxHistoryPoints)
         }
+        if ttftHistory.count > Self.maxHistoryPoints {
+            ttftHistory.removeFirst(ttftHistory.count - Self.maxHistoryPoints)
+        }
+        if prefillSpeedHistory.count > Self.maxHistoryPoints {
+            prefillSpeedHistory.removeFirst(prefillSpeedHistory.count - Self.maxHistoryPoints)
+        }
+        if cacheMatchDepthHistory.count > Self.maxHistoryPoints {
+            cacheMatchDepthHistory.removeFirst(cacheMatchDepthHistory.count - Self.maxHistoryPoints)
+        }
+        if visionTimeHistory.count > Self.maxHistoryPoints {
+            visionTimeHistory.removeFirst(visionTimeHistory.count - Self.maxHistoryPoints)
+        }
     }
 
     func reset() {
@@ -500,11 +634,15 @@ final class InferenceStats {
         isGenerating = false
         isPrefilling = false
         currentTokensPerSecond = 0
+        prefillTokensPerSecond = 0
+        timeToFirstToken = 0
         contextUsed = 0
         contextMax = 0
         currentPhaseElapsed = 0
         currentCacheMatchedPromptTokens = 0
         currentCacheRebuiltPromptTokens = 0
+        cacheMatchDepth = 0
+        visionEncoderTime = 0
         totalRequests = 0
         totalPromptTokens = 0
         totalGenerationTokens = 0
@@ -514,6 +652,8 @@ final class InferenceStats {
         totalSessionBuildDuration = 0
         totalPrefillDuration = 0
         totalGenerationDuration = 0
+        totalVisionEncoderDuration = 0
+        totalDisconnects = 0
         totalCacheHits = 0
         totalCacheMisses = 0
         totalCacheEvictions = 0
@@ -536,6 +676,10 @@ final class InferenceStats {
         cacheReusePromptHistory.removeAll()
         cacheRebuildPromptHistory.removeAll()
         cacheMatchQualityHistory.removeAll()
+        ttftHistory.removeAll()
+        prefillSpeedHistory.removeAll()
+        cacheMatchDepthHistory.removeAll()
+        visionTimeHistory.removeAll()
         lastGenerationTokenCount = 0
         lastPromptTokenCount = 0
         lastPrefillDuration = 0

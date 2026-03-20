@@ -43,12 +43,26 @@ struct MonitorView: View {
                         color: .blue
                     )
                     metricCard(
-                        title: "Prefill Reuse",
-                        value: formatTokenCount(stats.totalCacheReusePromptTokens),
+                        title: "Cache Match",
+                        value: formatTokenCount(stats.cacheMatchDepth),
                         detail: stats.currentCacheMatchedPromptTokens > 0
                             ? String(format: "%.0f%% match now", stats.currentCacheMatchQualityPercent)
                             : String(format: "%.0f%% total quality", stats.totalCacheMatchQualityPercent),
                         color: .teal
+                    )
+                    metricCard(
+                        title: "TTFT",
+                        value: formatMilliseconds(stats.timeToFirstToken * 1_000),
+                        detail: stats.isGenerating ? "time to first token" : "last completed request",
+                        color: .cyan
+                    )
+                    metricCard(
+                        title: "Prefill Speed",
+                        value: stats.prefillTokensPerSecond > 0
+                            ? String(format: "%.1f tok/s", stats.prefillTokensPerSecond)
+                            : "0 tok/s",
+                        detail: formatTokenCount(stats.currentPromptTokens) + " prompt tokens",
+                        color: .blue
                     )
                     metricCard(
                         title: "Context",
@@ -68,13 +82,23 @@ struct MonitorView: View {
                         detail: "\(stats.currentGenerationTokens) output tokens",
                         color: .green
                     )
+                    metricCard(
+                        title: "Disconnects",
+                        value: "\(stats.totalDisconnects)",
+                        detail: stats.totalDisconnects == 0 ? "none detected" : "streams cancelled by clients",
+                        color: .red
+                    )
                 }
 
                 LazyVGrid(columns: chartColumns, alignment: .leading, spacing: 16) {
+                    latencyChart
+                    prefillSpeedChart
                     throughputChart
-                    phaseChart
-                    cacheChart
+                    cacheMatchChart
                     memoryChart
+                    if hasVisionSamples {
+                        visionChart
+                    }
                 }
 
                 cumulativeSection
@@ -140,48 +164,33 @@ struct MonitorView: View {
         }
     }
 
-    private var phaseChart: some View {
-        chartCard(title: "Phase Timing") {
+    private var latencyChart: some View {
+        chartCard(title: "Time To First Token") {
             Chart {
-                ForEach(stats.currentPhaseElapsedHistory) { point in
+                ForEach(stats.ttftHistory) { point in
                     LineMark(
                         x: .value("Time", point.timestamp),
-                        y: .value("Age", point.value)
+                        y: .value("TTFT", point.value)
                     )
-                    .foregroundStyle(systemStateColor)
+                    .foregroundStyle(.cyan)
                     .interpolationMethod(.monotone)
-                }
-                ForEach(stats.prefillDurationHistory) { point in
-                    BarMark(
-                        x: .value("Time", point.timestamp),
-                        y: .value("Prefill", point.value)
-                    )
-                    .foregroundStyle(.blue.opacity(0.45))
                 }
             }
             .chartXAxis { timeAxis }
             .chartYAxis { leadingValueAxis }
             .frame(height: 180)
         } footer: {
-            legendRow(items: [("Active phase age", systemStateColor), ("Prefill completions", .blue)])
+            legendRow(items: [("TTFT ms", .cyan)])
         }
     }
 
-    private var cacheChart: some View {
-        chartCard(title: "Cache Match Quality") {
+    private var prefillSpeedChart: some View {
+        chartCard(title: "Prefill Speed") {
             Chart {
-                ForEach(stats.cacheMatchQualityHistory) { point in
+                ForEach(stats.prefillSpeedHistory) { point in
                     LineMark(
                         x: .value("Time", point.timestamp),
-                        y: .value("Match Quality", point.value)
-                    )
-                    .foregroundStyle(.teal)
-                    .interpolationMethod(.monotone)
-                }
-                ForEach(stats.cacheHitRateHistory) { point in
-                    LineMark(
-                        x: .value("Time", point.timestamp),
-                        y: .value("Hit Rate", point.value)
+                        y: .value("Prefill Speed", point.value)
                     )
                     .foregroundStyle(.blue)
                     .interpolationMethod(.monotone)
@@ -191,7 +200,41 @@ struct MonitorView: View {
             .chartYAxis { leadingValueAxis }
             .frame(height: 180)
         } footer: {
-            legendRow(items: [("Match quality %", .teal), ("Hit rate %", .blue)])
+            legendRow(items: [("Prompt tok/s", .blue)])
+        }
+    }
+
+    private var cacheMatchChart: some View {
+        chartCard(title: "Cache Match Depth") {
+            Chart {
+                ForEach(stats.cacheReusePromptHistory) { point in
+                    BarMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Cached", point.value)
+                    )
+                    .foregroundStyle(.teal.opacity(0.7))
+                }
+                ForEach(stats.cacheRebuildPromptHistory) { point in
+                    BarMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Prefilled", point.value)
+                    )
+                    .foregroundStyle(.orange.opacity(0.65))
+                }
+                ForEach(stats.cacheMatchDepthHistory) { point in
+                    LineMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Depth", point.value)
+                    )
+                    .foregroundStyle(.blue)
+                    .interpolationMethod(.monotone)
+                }
+            }
+            .chartXAxis { timeAxis }
+            .chartYAxis { leadingValueAxis }
+            .frame(height: 180)
+        } footer: {
+            legendRow(items: [("Cached", .teal), ("Prefilled", .orange), ("Matched depth", .blue)])
         }
     }
 
@@ -230,6 +273,25 @@ struct MonitorView: View {
         }
     }
 
+    private var visionChart: some View {
+        chartCard(title: "Vision Prepare Time") {
+            Chart {
+                ForEach(stats.visionTimeHistory) { point in
+                    BarMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Vision", point.value)
+                    )
+                    .foregroundStyle(.purple.opacity(0.8))
+                }
+            }
+            .chartXAxis { timeAxis }
+            .chartYAxis { leadingValueAxis }
+            .frame(height: 180)
+        } footer: {
+            legendRow(items: [("Prepare ms", .purple)])
+        }
+    }
+
     private var cumulativeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Totals")
@@ -240,11 +302,13 @@ struct MonitorView: View {
                 compactTile(title: "Prompt Tokens", value: formatTokenCount(stats.totalPromptTokens), color: .blue)
                 compactTile(title: "Generated Tokens", value: formatTokenCount(stats.totalGenerationTokens), color: .green)
                 compactTile(title: "Cache Evictions", value: "\(stats.totalCacheEvictions)", color: .red)
-                compactTile(title: "Reused Prefill", value: formatTokenCount(stats.totalCacheReusePromptTokens), color: .teal)
-                compactTile(title: "Rebuilt Prefill", value: formatTokenCount(stats.totalCacheRebuildPromptTokens), color: .orange)
+                compactTile(title: "Tokens From Cache", value: formatTokenCount(stats.totalCacheReusePromptTokens), color: .teal)
+                compactTile(title: "Tokens Prefilled", value: formatTokenCount(stats.totalCacheRebuildPromptTokens), color: .orange)
                 compactTile(title: "Match Quality", value: String(format: "%.0f%%", stats.totalCacheMatchQualityPercent), color: .teal)
                 compactTile(title: "Prefill Time", value: String(format: "%.1fs", stats.totalPrefillDuration), color: .blue)
                 compactTile(title: "Generation Time", value: String(format: "%.1fs", stats.totalGenerationDuration), color: .green)
+                compactTile(title: "Vision Time", value: String(format: "%.1fs", stats.totalVisionEncoderDuration), color: .purple)
+                compactTile(title: "Disconnects", value: "\(stats.totalDisconnects)", color: .red)
                 compactTile(title: "Cache Budget", value: formatByteCount(stats.cacheMemoryBudgetBytes), color: .orange)
             }
         }
@@ -450,5 +514,17 @@ struct MonitorView: View {
         let minutes = seconds / 60
         if minutes < 60 { return "\(minutes)m ago" }
         return "\(minutes / 60)h ago"
+    }
+
+    private var hasVisionSamples: Bool {
+        stats.visionTimeHistory.contains { $0.value > 0 }
+    }
+
+    private func formatMilliseconds(_ value: Double) -> String {
+        guard value > 0 else { return "0 ms" }
+        if value >= 1_000 {
+            return String(format: "%.2fs", value / 1_000)
+        }
+        return String(format: "%.0f ms", value)
     }
 }

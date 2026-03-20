@@ -36,6 +36,8 @@ final class APIServerRewriteTests: XCTestCase {
         let firstSnapshot = TokenPrefixCache.shared.snapshot()
         let firstLiveSnapshot = LiveCounters.shared.snapshot()
         XCTAssertGreaterThan(firstSnapshot.totalEntries, 0)
+        XCTAssertGreaterThan(firstLiveSnapshot.prefillTokensPerSecond, 0)
+        XCTAssertGreaterThan(firstLiveSnapshot.timeToFirstToken, 0)
 
         _ = try await sendChatCompletion(request, port: harness.port)
 
@@ -46,6 +48,7 @@ final class APIServerRewriteTests: XCTestCase {
         let secondLiveSnapshot = LiveCounters.shared.snapshot()
         XCTAssertGreaterThan(secondSnapshot.totalHits, firstSnapshot.totalHits)
         XCTAssertGreaterThan(secondLiveSnapshot.totalCacheReusePromptTokens, firstLiveSnapshot.totalCacheReusePromptTokens)
+        XCTAssertGreaterThan(secondLiveSnapshot.cacheMatchDepth, 0)
     }
 
     func testStreamingChatCompletionReusesCacheAcrossThreeProgressivelyLongerTurns() async throws {
@@ -429,6 +432,7 @@ final class APIServerRewriteTests: XCTestCase {
         let afterDisconnectSnapshot = TokenPrefixCache.shared.snapshot()
         let afterDisconnectLiveSnapshot = LiveCounters.shared.snapshot()
         XCTAssertGreaterThan(afterDisconnectSnapshot.totalEntries, initialSnapshot.totalEntries)
+        XCTAssertGreaterThan(afterDisconnectLiveSnapshot.totalDisconnects, 0)
 
         _ = try await sendChatCompletion(
             APIChatCompletionRequest(

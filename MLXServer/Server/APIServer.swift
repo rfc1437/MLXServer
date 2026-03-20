@@ -264,7 +264,14 @@ final class APIServer {
         let engine = InferenceEngine(container: container)
         let preparedInference: InferenceEngine.PreparedInference
         do {
+            let prepareStartedAt = Date()
             preparedInference = try await engine.prepare(preparedPrompt.userInput)
+            if preparedPrompt.containsImages {
+                LiveCounters.shared.visionProcessingCompleted(
+                    requestId: requestId,
+                    duration: Date().timeIntervalSince(prepareStartedAt)
+                )
+            }
         } catch {
             LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: 0)
             sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
@@ -428,6 +435,7 @@ final class APIServer {
         connection.stateUpdateHandler = { state in
             switch state {
             case .cancelled, .failed:
+                LiveCounters.shared.disconnectDetected(requestId: requestId)
                 cancellation.cancel()
             default:
                 break
@@ -538,6 +546,7 @@ final class APIServer {
         var fullText = ""
         var frameworkToolCalls: [MLXLMCommon.ToolCall] = []
         var cancelled = false
+        var sawFirstChunk = false
 
         for await generation in stream {
             if let cancellation, cancellation.isCancelled {
@@ -547,6 +556,10 @@ final class APIServer {
 
             switch generation {
             case .chunk(let text):
+                if !sawFirstChunk {
+                    sawFirstChunk = true
+                    LiveCounters.shared.firstTokenGenerated(requestId: requestId)
+                }
                 completionTokens += 1
                 fullText += text
                 LiveCounters.shared.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
