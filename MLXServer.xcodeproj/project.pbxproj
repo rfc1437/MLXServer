@@ -46,6 +46,7 @@
 		C07A377244DCD67F4FE709FE /* DownloadModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DC8C86D397B1FCA08E07CBD /* DownloadModalView.swift */; };
 		C34F02550C584BB2547F0F6C /* ChatDocumentPackage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B3AA91D2C7842D7366F9A41 /* ChatDocumentPackage.swift */; };
 		CBA88529F8BE7BD0518994AD /* SceneSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B5ABDEB6F5C54856EB1A9E /* SceneSelectionView.swift */; };
+		CBC9DB0799C4ADF2DC9319DA /* APIServerRewriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E43535D68448F1752D91C3A9 /* APIServerRewriteTests.swift */; };
 		CFEE79815DFB80E51FE3745A /* SceneStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C234359924C542F07ED926A2 /* SceneStore.swift */; };
 		D666A311788375E8A061C832 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4147321383E94E9F17A0154E /* SettingsView.swift */; };
 		D96DDE66F76FDDA642629E17 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A52E2C9964ADA9D841A89B /* APIModels.swift */; };
@@ -53,7 +54,6 @@
 		E199D0BB09B61AC128AB093A /* CancellationToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3489501F2F8E1BA382347CFA /* CancellationToken.swift */; };
 		E92B6656C251EDA246B8F582 /* ImageDecoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4573DC9314915F4C7963B4E /* ImageDecoderTests.swift */; };
 		EC4FC68608DDFA6A3DF133CC /* InferenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02EBDE0C72D1C5CE220E5B93 /* InferenceEngine.swift */; };
-		F141B91A64F7DAD73CE2910A /* ConversationSessionCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBB16D3AF2E61D001FD6051 /* ConversationSessionCache.swift */; };
 		F546CE5955ED253D8A793D5E /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A98257123539E9E738213BFA /* MarkdownUI */; };
 		FAF7D4714AC6D02674920208 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B359324B5FD8D106C74338 /* ChatMessage.swift */; };
 		FCD48F8C132A2B830A15EEB4 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 3F5A4AC6DBAF7CA686ECA74E /* MLXLLM */; };
@@ -114,6 +114,7 @@
 		DB1A5E8B1C9F2BC4D262C53A /* ChatMessagesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessagesView.swift; sourceTree = "<group>"; };
 		E1E62624B6F285479CB33041 /* PromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptBuilder.swift; sourceTree = "<group>"; };
 		E35452B166893B25E765FF70 /* InferenceStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InferenceStats.swift; sourceTree = "<group>"; };
+		E43535D68448F1752D91C3A9 /* APIServerRewriteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServerRewriteTests.swift; sourceTree = "<group>"; };
 		E4573DC9314915F4C7963B4E /* ImageDecoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDecoderTests.swift; sourceTree = "<group>"; };
 		E5E6AD02CDF23BDAB64700A7 /* ChatInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatInputView.swift; sourceTree = "<group>"; };
 		E73B165A1822729C907791AE /* ToolCallParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallParser.swift; sourceTree = "<group>"; };
@@ -121,7 +122,6 @@
 		F1A52E2C9964ADA9D841A89B /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
 		F4CE2D594F7433C76169151A /* MLXServerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MLXServerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FEFF6168B2283FEC87B4BB8C /* CancellationTokenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CancellationTokenTests.swift; sourceTree = "<group>"; };
-		FFBB16D3AF2E61D001FD6051 /* ConversationSessionCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSessionCache.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -172,6 +172,7 @@
 		154AF0C071A7DC02EB5F6F49 /* Server */ = {
 			isa = PBXGroup;
 			children = (
+				E43535D68448F1752D91C3A9 /* APIServerRewriteTests.swift */,
 				FEFF6168B2283FEC87B4BB8C /* CancellationTokenTests.swift */,
 				E4573DC9314915F4C7963B4E /* ImageDecoderTests.swift */,
 				D388BE00B42C06ED9D9905BF /* ModelBackedInferenceValidationTests.swift */,
@@ -263,7 +264,6 @@
 				F1A52E2C9964ADA9D841A89B /* APIModels.swift */,
 				3D08828E16B17EF02C14243E /* APIServer.swift */,
 				3489501F2F8E1BA382347CFA /* CancellationToken.swift */,
-				FFBB16D3AF2E61D001FD6051 /* ConversationSessionCache.swift */,
 				7C1A89C076E717F87A60397D /* ImageDecoder.swift */,
 				02EBDE0C72D1C5CE220E5B93 /* InferenceEngine.swift */,
 				E1E62624B6F285479CB33041 /* PromptBuilder.swift */,
@@ -379,6 +379,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CBC9DB0799C4ADF2DC9319DA /* APIServerRewriteTests.swift in Sources */,
 				962083CCCC4AC848E0BBBC99 /* CancellationTokenTests.swift in Sources */,
 				E92B6656C251EDA246B8F582 /* ImageDecoderTests.swift in Sources */,
 				8E665E21CCCD87A907CEA78D /* ModelBackedInferenceValidationTests.swift in Sources */,
@@ -406,7 +407,6 @@
 				85FB1EB49D76A9F21E181346 /* ChatScene.swift in Sources */,
 				B5AA6E3B4BE21676226B342B /* ChatViewModel.swift in Sources */,
 				5946258F1DE88CE904584E0B /* ContentView.swift in Sources */,
-				F141B91A64F7DAD73CE2910A /* ConversationSessionCache.swift in Sources */,
 				C07A377244DCD67F4FE709FE /* DownloadModalView.swift in Sources */,
 				4DC033E45880B2948B47DEB1 /* FocusedValues.swift in Sources */,
 				A146BBA70CFBEC505BDCDF0D /* ImageDecoder.swift in Sources */,

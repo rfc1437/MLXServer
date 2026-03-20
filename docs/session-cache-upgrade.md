@@ -2572,14 +2572,18 @@ Validation note: `PromptBuilder.swift` is now covered by both shaping-parity uni
 
 ### Phase 3: Integration
 
-7. **`APIServer.swift` rewrite** — Wire everything together. Replace ChatSession with InferenceEngine, ConversationSessionCache with TokenPrefixCache, add PromptBuilder and StreamingSSEEncoder.
+7. [x] **`APIServer.swift` rewrite** — Wire everything together. Replace ChatSession with InferenceEngine, ConversationSessionCache with TokenPrefixCache, add PromptBuilder and StreamingSSEEncoder.
 8. **Delete `ConversationSessionCache.swift`** — Only after APIServer is fully migrated and tested.
+
+Validation note: `APIServer.swift` now routes the API path through `PromptBuilder`, `InferenceEngine`, `TokenPrefixCache`, and `StreamingSSEEncoder`, and the full repository test workflow is green. Image-bearing requests intentionally bypass prefix-cache reuse for now until image fingerprinting is implemented.
 
 ### Phase 4: Statistics & Monitoring
 
 9. **LiveCounters upgrade** — Add TTFT, prefill tok/s, cache match depth, vision time, disconnect tracking. Wire up new reporting calls in APIServer.
-10. **InferenceStats upgrade** — Add new snapshot fields, new time-series histories. Switch from ConversationSessionCache.snapshot() to TokenPrefixCache.snapshot().
-11. **MonitorView upgrade** — Add TTFT chart, prefill speed chart, cache match quality chart, cache memory budget chart. Update cache card and cumulative tiles. Add vision encoder time chart (conditional on VL model). Replace session list with cache entry list.
+10. [x] **InferenceStats upgrade** — Add new snapshot fields, new time-series histories. Switch from ConversationSessionCache.snapshot() to TokenPrefixCache.snapshot().
+11. [x] **MonitorView upgrade** — Add TTFT chart, prefill speed chart, cache match quality chart, cache memory budget chart. Update cache card and cumulative tiles. Add vision encoder time chart (conditional on VL model). Replace session list with cache entry list.
+
+Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly and `MonitorView.swift` has been rebuilt around current system state and prefix-cache visibility rather than session-era charts. The dashboard now exposes cache match quality from matched-vs-rebuilt prompt token counters, but it still does not expose TTFT, cache match depth, or vision timing because those `LiveCounters` signals have not been implemented yet.
 
 ### Phase 5: Advanced Cache Matching
 

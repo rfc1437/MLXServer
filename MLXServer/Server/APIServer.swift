@@ -63,7 +63,7 @@ final class APIServer {
         listener?.cancel()
         listener = nil
         isRunning = false
-        ConversationSessionCache.shared.invalidateAll()
+        TokenPrefixCache.shared.invalidateAll()
         inferenceStats.stopSampling()
     }
 
@@ -176,7 +176,7 @@ final class APIServer {
             if let targetConfig = ModelConfig.resolve(requestedModel) {
                 if modelManager.currentModel?.id != targetConfig.id {
                     print("[APIServer] Swapping model: \(modelManager.currentModel?.repoId ?? "none") -> \(targetConfig.repoId)")
-                    ConversationSessionCache.shared.invalidateAll()
+                    TokenPrefixCache.shared.invalidateAll()
                     await modelManager.loadModel(targetConfig)
                 }
             }
@@ -187,7 +187,7 @@ final class APIServer {
         if modelManager.modelContainer == nil, let lastModelId = Preferences.lastModelId,
            let config = ModelConfig.resolve(lastModelId) {
             print("[APIServer] Reloading idle-unloaded model: \(config.repoId)")
-            ConversationSessionCache.shared.invalidateAll()
+            TokenPrefixCache.shared.invalidateAll()
             await modelManager.loadModel(config)
         }
 
@@ -260,110 +260,80 @@ final class APIServer {
             temperature: Float(temperature),
             topP: Float(topP)
         )
-
-        // Feed all messages except the last as history, then send the last as the prompt
-        let chatMessages = preparedPrompt.chatMessages
-        let allButLast = Array(chatMessages.dropLast())
-        let lastMessage = chatMessages.last ?? Chat.Message(role: .user, content: "")
-
-        let historySignatures = Array(preparedPrompt.messageSignatures.dropLast())
         let currentModelId = modelManager.currentModel?.id ?? modelName
-        let lease = ConversationSessionCache.shared.checkoutSession(
-            modelId: currentModelId,
-            instructions: preparedPrompt.instructions,
-            historySignatures: historySignatures,
-            requestMessageCount: chatMessages.count,
-            estimatedPromptTokens: estimatedPromptTokens,
-            estimatedBytes: preparedPrompt.estimatedBytes
-        )
-
-        let session: ChatSession
-        if let reusableSession = lease.session {
-            print("[APIServer] Reusing cached session (\(allButLast.count) history messages)")
-            session = reusableSession
-            session.generateParameters = generateParams
-            ConversationSessionCache.shared.markPrefilling(entryId: lease.entryId)
-            LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .prefilling)
-        } else {
-            print("[APIServer] Creating fresh session")
-            ConversationSessionCache.shared.markSessionBuild(entryId: lease.entryId)
-            LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .sessionBuild)
-            // Use `instructions:` for system/tool prompt (matches internal chat pattern).
-            // Only conversation turns go in `history:` — this avoids replaying the
-            // large tool prompt as history on every new session.
-            let instr = preparedPrompt.instructions.isEmpty ? nil : preparedPrompt.instructions
-            if !allButLast.isEmpty {
-                session = ChatSession(
-                    container,
-                    instructions: instr,
-                    history: allButLast,
-                    generateParameters: generateParams,
-                    additionalContext: preparedPrompt.additionalContext
-                )
-            } else {
-                session = ChatSession(
-                    container,
-                    instructions: instr,
-                    generateParameters: generateParams,
-                    additionalContext: preparedPrompt.additionalContext
-                )
-            }
-            ConversationSessionCache.shared.markPrefilling(entryId: lease.entryId)
-            LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .prefilling)
+        let engine = InferenceEngine(container: container)
+        let preparedInference: InferenceEngine.PreparedInference
+        do {
+            preparedInference = try await engine.prepare(preparedPrompt.userInput)
+        } catch {
+            LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: 0)
+            sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
+            return
         }
 
-        // Extract images from the last message only (ChatSession.streamDetails takes images separately)
-        let lastImages = lastMessage.images
+        // Vision requests stay uncached until image fingerprinting lands.
+        let cacheKey = preparedInference.hasImages ? nil : preparedInference.tokens
+        let lease = cacheKey.map { TokenPrefixCache.shared.lookup(cacheKey: $0, modelId: currentModelId) }
+            ?? TokenPrefixCache.CacheLease(entryId: UUID(), kvCache: nil, matchedTokenCount: 0, isHit: false)
 
-        let result: (promptTokens: Int, completionTokens: Int, assistantHistoryText: String?, succeeded: Bool)
+        LiveCounters.shared.recordPrefillReuse(
+            requestId: requestId,
+            matchedPromptTokens: lease.matchedTokenCount,
+            promptTokenCount: preparedInference.tokens.count
+        )
 
+        LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .prefilling)
+
+        let cancellation = CancellationToken()
+        let streamHandle: InferenceEngine.StreamHandle
+        do {
+            streamHandle = try await engine.stream(
+                InferenceEngine.InferenceRequest(
+                    input: preparedInference.lmInput,
+                    tokens: preparedInference.tokens,
+                    parameters: generateParams,
+                    cachedKV: lease.kvCache,
+                    cachedTokenCount: lease.matchedTokenCount
+                ),
+                cancellation: cancellation
+            )
+        } catch {
+            LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: 0)
+            sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
+            return
+        }
+
+        let result: GenerationOutcome
         if isStream {
             result = await handleStreamingResponse(
                 connection: connection,
                 requestId: requestId,
-                cacheEntryId: lease.entryId,
-                session: session,
-                prompt: lastMessage.content,
-                images: lastImages,
+                cancellation: cancellation,
+                stream: streamHandle.stream,
                 tools: request.tools,
                 created: created,
-                modelName: modelName,
-                isQwen: isQwen
+                modelName: modelName
             )
         } else {
             result = await handleNonStreamingResponse(
                 connection: connection,
                 requestId: requestId,
-                cacheEntryId: lease.entryId,
-                session: session,
-                prompt: lastMessage.content,
-                images: lastImages,
+                stream: streamHandle.stream,
                 tools: request.tools,
                 created: created,
-                modelName: modelName,
-                isQwen: isQwen
+                modelName: modelName
             )
         }
 
-        if result.succeeded {
-            var cachedSignatures = preparedPrompt.messageSignatures
-            if let assistantHistoryText = result.assistantHistoryText {
-                cachedSignatures.append(
-                    Self.messageSignature(role: .assistant, content: assistantHistoryText, imageURLs: [])
-                )
-            }
-            ConversationSessionCache.shared.completeRequest(
+        if let cacheKey,
+           result.succeeded || result.cancelled {
+            Self.storePromptCache(
+                streamHandle.workingCache,
+                promptTokenCount: preparedInference.tokens.count,
                 entryId: lease.entryId,
-                session: session,
-                requestMessageSignatures: cachedSignatures,
-                requestMessageCount: cachedSignatures.count,
-                estimatedPromptTokens: estimatedPromptTokens,
-                estimatedBytes: preparedPrompt.estimatedBytes,
-                promptTokens: result.promptTokens,
-                completionTokens: result.completionTokens
+                cacheKey: cacheKey,
+                modelId: currentModelId
             )
-        } else {
-            ConversationSessionCache.shared.abandonRequest(entryId: lease.entryId)
         }
 
         LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: result.completionTokens)
@@ -375,53 +345,20 @@ final class APIServer {
     private func handleNonStreamingResponse(
         connection: NWConnection,
         requestId: String,
-        cacheEntryId: UUID,
-        session: ChatSession,
-        prompt: String,
-        images: [UserInput.Image],
+        stream: AsyncStream<Generation>,
         tools: [APIToolDefinition]?,
         created: Int,
-        modelName: String,
-        isQwen: Bool
-    ) async -> (promptTokens: Int, completionTokens: Int, assistantHistoryText: String?, succeeded: Bool) {
+        modelName: String
+    ) async -> GenerationOutcome {
         do {
-            var fullText = ""
-            var promptTokens = 0
-            var completionTokens = 0
-            var frameworkToolCalls: [MLXLMCommon.ToolCall] = []
-
-            let stream = session.streamDetails(
-                to: prompt,
-                images: images,
-                videos: []
+            let outcome = await Self.collectGenerationOutcome(
+                stream: stream,
+                requestId: requestId,
+                cancellation: nil
             )
-
-            for try await generation in stream {
-                switch generation {
-                case .chunk(let text):
-                    fullText += text
-                    completionTokens += 1
-                    LiveCounters.shared.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
-                case .info(let info):
-                    promptTokens = info.promptTokenCount
-                    completionTokens = info.generationTokenCount
-                    ConversationSessionCache.shared.markGenerating(
-                        entryId: cacheEntryId,
-                        promptTokens: promptTokens,
-                        completionTokens: completionTokens
-                    )
-                    LiveCounters.shared.prefillCompleted(requestId: requestId, promptTokens: promptTokens)
-                    if info.tokensPerSecond > 0 {
-                        LiveCounters.shared.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
-                    }
-                case .toolCall(let call):
-                    frameworkToolCalls.append(call)
-                }
-            }
-
             let resolved = Self.resolveAssistantResponse(
-                fullText: fullText,
-                frameworkToolCalls: frameworkToolCalls,
+                fullText: outcome.fullText,
+                frameworkToolCalls: outcome.frameworkToolCalls,
                 tools: tools
             )
 
@@ -442,24 +379,26 @@ final class APIServer {
                     )
                 ],
                 usage: APIUsageInfo(
-                    prompt_tokens: promptTokens,
-                    completion_tokens: completionTokens,
-                    total_tokens: promptTokens + completionTokens
+                    prompt_tokens: outcome.promptTokens,
+                    completion_tokens: outcome.completionTokens,
+                    total_tokens: outcome.promptTokens + outcome.completionTokens
                 )
             )
 
             if let json = try? JSONEncoder().encode(response) {
                 sendResponse(connection: connection, status: 200, body: String(data: json, encoding: .utf8) ?? "{}")
             }
-            let assistantHistoryText = Self.normalizedAssistantHistoryContent(
-                content: resolved.content,
-                toolCalls: resolved.toolCalls,
-                isQwen: isQwen
+            return GenerationOutcome(
+                promptTokens: outcome.promptTokens,
+                completionTokens: outcome.completionTokens,
+                fullText: outcome.fullText,
+                frameworkToolCalls: outcome.frameworkToolCalls,
+                succeeded: true,
+                cancelled: false
             )
-            return (promptTokens, completionTokens, assistantHistoryText, true)
         } catch {
             sendResponse(connection: connection, status: 500, body: #"{"error":"\#(error.localizedDescription)"}"#)
-            return (0, 0, nil, false)
+            return GenerationOutcome(promptTokens: 0, completionTokens: 0, fullText: "", frameworkToolCalls: [], succeeded: false, cancelled: false)
         }
     }
 
@@ -468,15 +407,12 @@ final class APIServer {
     private func handleStreamingResponse(
         connection: NWConnection,
         requestId: String,
-        cacheEntryId: UUID,
-        session: ChatSession,
-        prompt: String,
-        images: [UserInput.Image],
+        cancellation: CancellationToken,
+        stream: AsyncStream<Generation>,
         tools: [APIToolDefinition]?,
         created: Int,
-        modelName: String,
-        isQwen: Bool
-    ) async -> (promptTokens: Int, completionTokens: Int, assistantHistoryText: String?, succeeded: Bool) {
+        modelName: String
+    ) async -> GenerationOutcome {
         // Send SSE headers
         let header = [
             "HTTP/1.1 200 OK",
@@ -489,55 +425,34 @@ final class APIServer {
         ].joined(separator: "\r\n")
 
         await Self.sendData(connection: connection, data: header.data(using: .utf8)!)
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .cancelled, .failed:
+                cancellation.cancel()
+            default:
+                break
+            }
+        }
 
-        // Send initial role chunk
-        await Self.sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
-            id: requestId,
-            object: "chat.completion.chunk",
-            created: created,
-            model: modelName,
-            choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: "assistant", content: nil, tool_calls: nil), finish_reason: nil)],
-            usage: nil
-        ))
+        let encoder = StreamingSSEEncoder(requestId: requestId, created: created, modelName: modelName)
+        await Self.sendData(connection: connection, data: encoder.encodeRoleDelta("assistant"))
 
-        let hasTools = tools != nil && !(tools?.isEmpty ?? true)
-
-        // Run the generation loop OFF MainActor.
-        // ChatSession and NWConnection don't need MainActor.
-        // Running on MainActor caused every token to compete with SwiftUI
-        // rendering, creating back-pressure that coalesced all output.
-        let stream = session.streamDetails(
-            to: prompt,
-            images: images,
-            videos: []
+        let result = await Self.runStreamingLoop(
+            connection: connection,
+            stream: stream,
+            cancellation: cancellation,
+            requestId: requestId,
+            encoder: encoder
         )
-        // Transfer non-Sendable values to the nonisolated loop.
-        // Safe because we don't touch session/images again until after the loop.
-        let result = await {
-            nonisolated(unsafe) let stream = stream
-            return await Self.runStreamingLoop(
-                connection: connection,
-                stream: stream,
-                requestId: requestId,
-                created: created,
-                modelName: modelName
-            )
-        }()
 
-        let (promptTokens, completionTokens, fullText, frameworkToolCalls, succeeded) = result
-
-        if promptTokens > 0 {
-            ConversationSessionCache.shared.markGenerating(
-                entryId: cacheEntryId,
-                promptTokens: promptTokens,
-                completionTokens: completionTokens
-            )
-            LiveCounters.shared.prefillCompleted(requestId: requestId, promptTokens: promptTokens)
+        if result.cancelled {
+            connection.cancel()
+            return result
         }
 
         let resolved = Self.resolveAssistantResponse(
-            fullText: fullText,
-            frameworkToolCalls: frameworkToolCalls,
+            fullText: result.fullText,
+            frameworkToolCalls: result.frameworkToolCalls,
             tools: tools
         )
 
@@ -562,21 +477,16 @@ final class APIServer {
             model: modelName,
             choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: nil, tool_calls: nil), finish_reason: resolved.finishReason)],
             usage: APIUsageInfo(
-                prompt_tokens: promptTokens,
-                completion_tokens: completionTokens,
-                total_tokens: promptTokens + completionTokens
+                prompt_tokens: result.promptTokens,
+                completion_tokens: result.completionTokens,
+                total_tokens: result.promptTokens + result.completionTokens
             )
         ))
 
         // Send [DONE] and close
         await Self.sendData(connection: connection, data: "data: [DONE]\n\n".data(using: .utf8)!)
         connection.cancel()
-        let assistantHistoryText = Self.normalizedAssistantHistoryContent(
-            content: resolved.content,
-            toolCalls: resolved.toolCalls,
-            isQwen: isQwen
-        )
-        return (promptTokens, completionTokens, assistantHistoryText, succeeded)
+        return result
     }
 
     /// Run the token generation + SSE send loop entirely off MainActor.
@@ -584,54 +494,20 @@ final class APIServer {
     /// multiple actor hops competing with SwiftUI, causing all output to batch.
     nonisolated private static func runStreamingLoop(
         connection: NWConnection,
-        stream: AsyncThrowingStream<Generation, any Error>,
+        stream: AsyncStream<Generation>,
+        cancellation: CancellationToken,
         requestId: String,
-        created: Int,
-        modelName: String
-    ) async -> (Int, Int, String, [MLXLMCommon.ToolCall], Bool) {
-        var promptTokens = 0
-        var completionTokens = 0
-        var fullText = ""
-        var frameworkToolCalls: [MLXLMCommon.ToolCall] = []
-
-        do {
-            for try await generation in stream {
-                switch generation {
-                case .chunk(let text):
-                    completionTokens += 1
-                    fullText += text
-
-                    // Update live counters directly — no MainActor hop needed
-                    LiveCounters.shared.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
-
-                    // Send directly — no MainActor hop.
-                    await sendSSEEvent(connection: connection, chunk: APIChatCompletionChunk(
-                        id: requestId,
-                        object: "chat.completion.chunk",
-                        created: created,
-                        model: modelName,
-                        choices: [APIStreamChoice(index: 0, delta: APIDeltaMessage(role: nil, content: text, tool_calls: nil), finish_reason: nil)],
-                        usage: nil
-                    ))
-
-                case .info(let info):
-                    promptTokens = info.promptTokenCount
-                    completionTokens = info.generationTokenCount
-                    if info.tokensPerSecond > 0 {
-                        LiveCounters.shared.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
-                    }
-
-                case .toolCall(let call):
-                    frameworkToolCalls.append(call)
-                }
-            }
-        } catch {
-            let errorEvent = "data: {\"error\":\"\(error.localizedDescription)\"}\n\n"
-            await sendData(connection: connection, data: errorEvent.data(using: .utf8)!)
-            return (promptTokens, completionTokens, fullText, frameworkToolCalls, false)
+        encoder: StreamingSSEEncoder
+    ) async -> GenerationOutcome {
+        var outcome = await collectGenerationOutcome(
+            stream: stream,
+            requestId: requestId,
+            cancellation: cancellation
+        ) { text in
+            await sendData(connection: connection, data: encoder.encodeContentDelta(text))
         }
-
-        return (promptTokens, completionTokens, fullText, frameworkToolCalls, true)
+        outcome.succeeded = !outcome.cancelled
+        return outcome
     }
 
     /// Send an SSE event and wait for the protocol stack to process it.
@@ -649,6 +525,88 @@ final class APIServer {
                 continuation.resume()
             }))
         }
+    }
+
+    nonisolated private static func collectGenerationOutcome(
+        stream: AsyncStream<Generation>,
+        requestId: String,
+        cancellation: CancellationToken?,
+        onChunk: ((String) async -> Void)? = nil
+    ) async -> GenerationOutcome {
+        var promptTokens = 0
+        var completionTokens = 0
+        var fullText = ""
+        var frameworkToolCalls: [MLXLMCommon.ToolCall] = []
+        var cancelled = false
+
+        for await generation in stream {
+            if let cancellation, cancellation.isCancelled {
+                cancelled = true
+                break
+            }
+
+            switch generation {
+            case .chunk(let text):
+                completionTokens += 1
+                fullText += text
+                LiveCounters.shared.tokenGenerated(tokensPerSecond: 0, totalGenerated: completionTokens)
+                if let onChunk {
+                    await onChunk(text)
+                }
+            case .info(let info):
+                promptTokens = info.promptTokenCount
+                completionTokens = info.generationTokenCount
+                LiveCounters.shared.prefillCompleted(requestId: requestId, promptTokens: promptTokens)
+                if info.tokensPerSecond > 0 {
+                    LiveCounters.shared.tokenGenerated(tokensPerSecond: info.tokensPerSecond, totalGenerated: completionTokens)
+                }
+            case .toolCall(let call):
+                frameworkToolCalls.append(call)
+            }
+        }
+
+        return GenerationOutcome(
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            fullText: fullText,
+            frameworkToolCalls: frameworkToolCalls,
+            succeeded: !cancelled,
+            cancelled: cancelled
+        )
+    }
+
+    private static func storePromptCache(
+        _ cache: [KVCache],
+        promptTokenCount: Int,
+        entryId: UUID,
+        cacheKey: [Int],
+        modelId: String
+    ) {
+        guard trimGeneratedTokens(cache, promptTokenCount: promptTokenCount) else {
+            return
+        }
+        TokenPrefixCache.shared.store(
+            entryId: entryId,
+            kvCache: cache,
+            cacheKey: cacheKey,
+            modelId: modelId
+        )
+    }
+
+    private static func trimGeneratedTokens(_ cache: [KVCache], promptTokenCount: Int) -> Bool {
+        for layer in cache {
+            let excess = layer.offset - promptTokenCount
+            guard excess <= 0 || layer.isTrimmable else {
+                return false
+            }
+            if excess > 0 {
+                let trimmed = layer.trim(excess)
+                guard trimmed == excess else {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     // MARK: - HTTP helpers
@@ -785,6 +743,15 @@ final class APIServer {
 
         return (responseContent, apiToolCalls, finishReason)
     }
+}
+
+private struct GenerationOutcome {
+    var promptTokens: Int
+    var completionTokens: Int
+    var fullText: String
+    var frameworkToolCalls: [MLXLMCommon.ToolCall]
+    var succeeded: Bool
+    var cancelled: Bool
 }
 
 // MARK: - HTTP request parser

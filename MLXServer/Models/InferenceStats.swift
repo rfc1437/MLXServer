@@ -24,11 +24,15 @@ final class LiveCounters: @unchecked Sendable {
     private var _isGenerating: Bool = false
     private var _contextMax: Int = 0
     private var _currentPhaseElapsed: TimeInterval = 0
+    private var _currentCacheMatchedPromptTokens: Int = 0
+    private var _currentCacheRebuiltPromptTokens: Int = 0
 
     // Cumulative
     private var _totalRequests: Int = 0
     private var _totalPromptTokens: Int = 0
     private var _totalGenerationTokens: Int = 0
+    private var _totalCacheReusePromptTokens: Int = 0
+    private var _totalCacheRebuildPromptTokens: Int = 0
     private var _totalPreparingDuration: TimeInterval = 0
     private var _totalSessionBuildDuration: TimeInterval = 0
     private var _totalPrefillDuration: TimeInterval = 0
@@ -90,6 +94,26 @@ final class LiveCounters: @unchecked Sendable {
         lock.unlock()
     }
 
+    func recordPrefillReuse(requestId: String, matchedPromptTokens: Int, promptTokenCount: Int) {
+        lock.lock()
+        guard var state = requestPhases[requestId] else {
+            lock.unlock()
+            return
+        }
+
+        let matched = max(0, matchedPromptTokens)
+        let rebuilt = max(0, promptTokenCount - matched)
+
+        _totalCacheReusePromptTokens += matched
+        _totalCacheRebuildPromptTokens += rebuilt
+
+        state.matchedPromptTokens = matched
+        state.rebuiltPromptTokens = rebuilt
+        requestPhases[requestId] = state
+        refreshCurrentCachePromptStatsLocked()
+        lock.unlock()
+    }
+
     func requestCompleted(requestId: String, generationTokens: Int) {
         let now = Date()
         lock.lock()
@@ -108,6 +132,7 @@ final class LiveCounters: @unchecked Sendable {
             _isGenerating = _generatingRequests > 0
         }
         refreshCurrentPhaseElapsed(now: now)
+        refreshCurrentCachePromptStatsLocked()
         lock.unlock()
     }
 
@@ -126,9 +151,13 @@ final class LiveCounters: @unchecked Sendable {
         _isGenerating = false
         _contextMax = 0
         _currentPhaseElapsed = 0
+        _currentCacheMatchedPromptTokens = 0
+        _currentCacheRebuiltPromptTokens = 0
         _totalRequests = 0
         _totalPromptTokens = 0
         _totalGenerationTokens = 0
+        _totalCacheReusePromptTokens = 0
+        _totalCacheRebuildPromptTokens = 0
         _totalPreparingDuration = 0
         _totalSessionBuildDuration = 0
         _totalPrefillDuration = 0
@@ -154,9 +183,13 @@ final class LiveCounters: @unchecked Sendable {
             isGenerating: _isGenerating,
             contextMax: _contextMax,
             currentPhaseElapsed: _currentPhaseElapsed,
+            currentCacheMatchedPromptTokens: _currentCacheMatchedPromptTokens,
+            currentCacheRebuiltPromptTokens: _currentCacheRebuiltPromptTokens,
             totalRequests: _totalRequests,
             totalPromptTokens: _totalPromptTokens,
             totalGenerationTokens: _totalGenerationTokens,
+            totalCacheReusePromptTokens: _totalCacheReusePromptTokens,
+            totalCacheRebuildPromptTokens: _totalCacheRebuildPromptTokens,
             totalPreparingDuration: _totalPreparingDuration,
             totalSessionBuildDuration: _totalSessionBuildDuration,
             totalPrefillDuration: _totalPrefillDuration,
@@ -179,9 +212,13 @@ final class LiveCounters: @unchecked Sendable {
         let isGenerating: Bool
         let contextMax: Int
         let currentPhaseElapsed: TimeInterval
+        let currentCacheMatchedPromptTokens: Int
+        let currentCacheRebuiltPromptTokens: Int
         let totalRequests: Int
         let totalPromptTokens: Int
         let totalGenerationTokens: Int
+        let totalCacheReusePromptTokens: Int
+        let totalCacheRebuildPromptTokens: Int
         let totalPreparingDuration: TimeInterval
         let totalSessionBuildDuration: TimeInterval
         let totalPrefillDuration: TimeInterval
@@ -231,9 +268,16 @@ final class LiveCounters: @unchecked Sendable {
         _currentPhaseElapsed = requestPhases.values.map { now.timeIntervalSince($0.phaseStartedAt) }.max() ?? 0
     }
 
+    private func refreshCurrentCachePromptStatsLocked() {
+        _currentCacheMatchedPromptTokens = requestPhases.values.reduce(0) { $0 + $1.matchedPromptTokens }
+        _currentCacheRebuiltPromptTokens = requestPhases.values.reduce(0) { $0 + $1.rebuiltPromptTokens }
+    }
+
     private struct RequestState {
         var phase: RequestPhase
         var phaseStartedAt: Date
+        var matchedPromptTokens: Int = 0
+        var rebuiltPromptTokens: Int = 0
     }
 
     enum RequestPhase {
@@ -264,17 +308,20 @@ final class InferenceStats {
     var contextUsed: Int = 0
     var contextMax: Int = 0
     var currentPhaseElapsed: TimeInterval = 0
+    var currentCacheMatchedPromptTokens: Int = 0
+    var currentCacheRebuiltPromptTokens: Int = 0
 
     // MARK: - Cumulative counters
 
     var totalRequests: Int = 0
     var totalPromptTokens: Int = 0
     var totalGenerationTokens: Int = 0
+    var totalCacheReusePromptTokens: Int = 0
+    var totalCacheRebuildPromptTokens: Int = 0
     var totalCacheHits: Int = 0
     var totalCacheMisses: Int = 0
     var totalCacheEvictions: Int = 0
-    var totalCacheReusePromptTokens: Int = 0
-    var totalCacheRebuildPromptTokens: Int = 0
+    var cacheHitRatePercent: Double = 0
     var totalPreparingDuration: TimeInterval = 0
     var totalSessionBuildDuration: TimeInterval = 0
     var totalPrefillDuration: TimeInterval = 0
@@ -283,12 +330,11 @@ final class InferenceStats {
     // MARK: - Cache state
 
     var cacheEntryCount: Int = 0
-    var warmCacheEntryCount: Int = 0
-    var activeCacheEntryCount: Int = 0
-    var generatingCacheEntryCount: Int = 0
     var cacheEstimatedBytes: Int = 0
     var cacheEstimatedTokens: Int = 0
-    var cachedSessions: [ConversationSessionCache.SessionSummary] = []
+    var cacheMemoryBudgetBytes: Int = 0
+    var cacheMemoryUsagePercent: Double = 0
+    var cachedEntries: [TokenPrefixCache.EntrySummary] = []
 
     // MARK: - Time series data (ring buffers for charts)
 
@@ -302,13 +348,14 @@ final class InferenceStats {
     private(set) var promptTokenHistory: [DataPoint] = []
     private(set) var generationTokenHistory: [DataPoint] = []
     private(set) var cacheEntryHistory: [DataPoint] = []
-    private(set) var activeSessionHistory: [DataPoint] = []
     private(set) var cacheFootprintHistory: [DataPoint] = []
-    private(set) var cacheReuseHistory: [DataPoint] = []
-    private(set) var cacheRebuildHistory: [DataPoint] = []
+    private(set) var cacheHitRateHistory: [DataPoint] = []
+    private(set) var cacheMemoryPressureHistory: [DataPoint] = []
     private(set) var currentPhaseElapsedHistory: [DataPoint] = []
     private(set) var prefillDurationHistory: [DataPoint] = []
-    private(set) var sessionBuildDurationHistory: [DataPoint] = []
+    private(set) var cacheReusePromptHistory: [DataPoint] = []
+    private(set) var cacheRebuildPromptHistory: [DataPoint] = []
+    private(set) var cacheMatchQualityHistory: [DataPoint] = []
 
     private static let maxHistoryPoints = 120 // ~2 minutes at 1Hz
 
@@ -316,10 +363,9 @@ final class InferenceStats {
     private var sampleTimer: Timer?
     private var lastGenerationTokenCount: Int = 0
     private var lastPromptTokenCount: Int = 0
-    private var lastCacheReuseTokenCount: Int = 0
-    private var lastCacheRebuildTokenCount: Int = 0
     private var lastPrefillDuration: TimeInterval = 0
-    private var lastSessionBuildDuration: TimeInterval = 0
+    private var lastCacheReusePromptTokenCount: Int = 0
+    private var lastCacheRebuildPromptTokenCount: Int = 0
 
     func startSampling() {
         guard sampleTimer == nil else { return }
@@ -338,7 +384,7 @@ final class InferenceStats {
     private func recordSample() {
         // Pull live values from the thread-safe counters
         let snap = LiveCounters.shared.snapshot()
-        let cache = ConversationSessionCache.shared.snapshot()
+        let cache = TokenPrefixCache.shared.snapshot()
 
         activeRequests = snap.activeRequests
         preparingRequests = snap.preparingRequests
@@ -353,9 +399,13 @@ final class InferenceStats {
         contextMax = snap.contextMax
         contextUsed = snap.promptTokens + snap.generationTokens
         currentPhaseElapsed = snap.currentPhaseElapsed
+        currentCacheMatchedPromptTokens = snap.currentCacheMatchedPromptTokens
+        currentCacheRebuiltPromptTokens = snap.currentCacheRebuiltPromptTokens
         totalRequests = snap.totalRequests
         totalPromptTokens = snap.totalPromptTokens
         totalGenerationTokens = snap.totalGenerationTokens
+        totalCacheReusePromptTokens = snap.totalCacheReusePromptTokens
+        totalCacheRebuildPromptTokens = snap.totalCacheRebuildPromptTokens
         totalPreparingDuration = snap.totalPreparingDuration
         totalSessionBuildDuration = snap.totalSessionBuildDuration
         totalPrefillDuration = snap.totalPrefillDuration
@@ -363,41 +413,41 @@ final class InferenceStats {
         totalCacheHits = cache.totalHits
         totalCacheMisses = cache.totalMisses
         totalCacheEvictions = cache.totalEvictions
-        totalCacheReusePromptTokens = cache.totalReusePromptTokens
-        totalCacheRebuildPromptTokens = cache.totalRebuildPromptTokens
+        cacheHitRatePercent = cache.hitRate
         cacheEntryCount = cache.totalEntries
-        warmCacheEntryCount = cache.warmEntries
-        activeCacheEntryCount = cache.activeEntries
-        generatingCacheEntryCount = cache.generatingEntries
         cacheEstimatedBytes = cache.estimatedBytes
-        cacheEstimatedTokens = cache.cachedTokenEstimate
-        cachedSessions = cache.sessions
+        cacheEstimatedTokens = cache.totalCachedTokens
+        cacheMemoryBudgetBytes = cache.memoryBudgetBytes
+        cacheMemoryUsagePercent = cache.memoryUsagePercent
+        cachedEntries = cache.entries
 
         let now = Date.now
         let genDelta = snap.totalGenerationTokens - lastGenerationTokenCount
         let promptDelta = snap.totalPromptTokens - lastPromptTokenCount
-        let cacheReuseDelta = cache.totalReusePromptTokens - lastCacheReuseTokenCount
-        let cacheRebuildDelta = cache.totalRebuildPromptTokens - lastCacheRebuildTokenCount
         let prefillDurationDelta = snap.totalPrefillDuration - lastPrefillDuration
-        let sessionBuildDurationDelta = snap.totalSessionBuildDuration - lastSessionBuildDuration
+        let cacheReusePromptDelta = snap.totalCacheReusePromptTokens - lastCacheReusePromptTokenCount
+        let cacheRebuildPromptDelta = snap.totalCacheRebuildPromptTokens - lastCacheRebuildPromptTokenCount
+        let cacheMatchQualityDelta = cacheReusePromptDelta + cacheRebuildPromptDelta > 0
+            ? (Double(cacheReusePromptDelta) / Double(cacheReusePromptDelta + cacheRebuildPromptDelta)) * 100
+            : 0
         lastGenerationTokenCount = snap.totalGenerationTokens
         lastPromptTokenCount = snap.totalPromptTokens
-        lastCacheReuseTokenCount = cache.totalReusePromptTokens
-        lastCacheRebuildTokenCount = cache.totalRebuildPromptTokens
         lastPrefillDuration = snap.totalPrefillDuration
-        lastSessionBuildDuration = snap.totalSessionBuildDuration
+        lastCacheReusePromptTokenCount = snap.totalCacheReusePromptTokens
+        lastCacheRebuildPromptTokenCount = snap.totalCacheRebuildPromptTokens
 
         tokenRateHistory.append(DataPoint(timestamp: now, value: snap.tokensPerSecond))
         generationTokenHistory.append(DataPoint(timestamp: now, value: Double(genDelta)))
         promptTokenHistory.append(DataPoint(timestamp: now, value: Double(promptDelta)))
         cacheEntryHistory.append(DataPoint(timestamp: now, value: Double(cache.totalEntries)))
-        activeSessionHistory.append(DataPoint(timestamp: now, value: Double(cache.activeEntries)))
         cacheFootprintHistory.append(DataPoint(timestamp: now, value: Double(cache.estimatedBytes)))
-        cacheReuseHistory.append(DataPoint(timestamp: now, value: Double(cacheReuseDelta)))
-        cacheRebuildHistory.append(DataPoint(timestamp: now, value: Double(cacheRebuildDelta)))
+        cacheHitRateHistory.append(DataPoint(timestamp: now, value: cache.hitRate))
+        cacheMemoryPressureHistory.append(DataPoint(timestamp: now, value: cache.memoryUsagePercent))
         currentPhaseElapsedHistory.append(DataPoint(timestamp: now, value: snap.currentPhaseElapsed))
         prefillDurationHistory.append(DataPoint(timestamp: now, value: prefillDurationDelta))
-        sessionBuildDurationHistory.append(DataPoint(timestamp: now, value: sessionBuildDurationDelta))
+        cacheReusePromptHistory.append(DataPoint(timestamp: now, value: Double(cacheReusePromptDelta)))
+        cacheRebuildPromptHistory.append(DataPoint(timestamp: now, value: Double(cacheRebuildPromptDelta)))
+        cacheMatchQualityHistory.append(DataPoint(timestamp: now, value: cacheMatchQualityDelta))
 
         if tokenRateHistory.count > Self.maxHistoryPoints {
             tokenRateHistory.removeFirst(tokenRateHistory.count - Self.maxHistoryPoints)
@@ -411,17 +461,14 @@ final class InferenceStats {
         if cacheEntryHistory.count > Self.maxHistoryPoints {
             cacheEntryHistory.removeFirst(cacheEntryHistory.count - Self.maxHistoryPoints)
         }
-        if activeSessionHistory.count > Self.maxHistoryPoints {
-            activeSessionHistory.removeFirst(activeSessionHistory.count - Self.maxHistoryPoints)
-        }
         if cacheFootprintHistory.count > Self.maxHistoryPoints {
             cacheFootprintHistory.removeFirst(cacheFootprintHistory.count - Self.maxHistoryPoints)
         }
-        if cacheReuseHistory.count > Self.maxHistoryPoints {
-            cacheReuseHistory.removeFirst(cacheReuseHistory.count - Self.maxHistoryPoints)
+        if cacheHitRateHistory.count > Self.maxHistoryPoints {
+            cacheHitRateHistory.removeFirst(cacheHitRateHistory.count - Self.maxHistoryPoints)
         }
-        if cacheRebuildHistory.count > Self.maxHistoryPoints {
-            cacheRebuildHistory.removeFirst(cacheRebuildHistory.count - Self.maxHistoryPoints)
+        if cacheMemoryPressureHistory.count > Self.maxHistoryPoints {
+            cacheMemoryPressureHistory.removeFirst(cacheMemoryPressureHistory.count - Self.maxHistoryPoints)
         }
         if currentPhaseElapsedHistory.count > Self.maxHistoryPoints {
             currentPhaseElapsedHistory.removeFirst(currentPhaseElapsedHistory.count - Self.maxHistoryPoints)
@@ -429,14 +476,20 @@ final class InferenceStats {
         if prefillDurationHistory.count > Self.maxHistoryPoints {
             prefillDurationHistory.removeFirst(prefillDurationHistory.count - Self.maxHistoryPoints)
         }
-        if sessionBuildDurationHistory.count > Self.maxHistoryPoints {
-            sessionBuildDurationHistory.removeFirst(sessionBuildDurationHistory.count - Self.maxHistoryPoints)
+        if cacheReusePromptHistory.count > Self.maxHistoryPoints {
+            cacheReusePromptHistory.removeFirst(cacheReusePromptHistory.count - Self.maxHistoryPoints)
+        }
+        if cacheRebuildPromptHistory.count > Self.maxHistoryPoints {
+            cacheRebuildPromptHistory.removeFirst(cacheRebuildPromptHistory.count - Self.maxHistoryPoints)
+        }
+        if cacheMatchQualityHistory.count > Self.maxHistoryPoints {
+            cacheMatchQualityHistory.removeFirst(cacheMatchQualityHistory.count - Self.maxHistoryPoints)
         }
     }
 
     func reset() {
         LiveCounters.shared.reset()
-        ConversationSessionCache.shared.reset()
+        TokenPrefixCache.shared.reset()
         activeRequests = 0
         preparingRequests = 0
         sessionBuildRequests = 0
@@ -450,9 +503,13 @@ final class InferenceStats {
         contextUsed = 0
         contextMax = 0
         currentPhaseElapsed = 0
+        currentCacheMatchedPromptTokens = 0
+        currentCacheRebuiltPromptTokens = 0
         totalRequests = 0
         totalPromptTokens = 0
         totalGenerationTokens = 0
+        totalCacheReusePromptTokens = 0
+        totalCacheRebuildPromptTokens = 0
         totalPreparingDuration = 0
         totalSessionBuildDuration = 0
         totalPrefillDuration = 0
@@ -460,31 +517,41 @@ final class InferenceStats {
         totalCacheHits = 0
         totalCacheMisses = 0
         totalCacheEvictions = 0
-        totalCacheReusePromptTokens = 0
-        totalCacheRebuildPromptTokens = 0
+        cacheHitRatePercent = 0
         cacheEntryCount = 0
-        warmCacheEntryCount = 0
-        activeCacheEntryCount = 0
-        generatingCacheEntryCount = 0
         cacheEstimatedBytes = 0
         cacheEstimatedTokens = 0
-        cachedSessions.removeAll()
+        cacheMemoryBudgetBytes = 0
+        cacheMemoryUsagePercent = 0
+        cachedEntries.removeAll()
         tokenRateHistory.removeAll()
         promptTokenHistory.removeAll()
         generationTokenHistory.removeAll()
         cacheEntryHistory.removeAll()
-        activeSessionHistory.removeAll()
         cacheFootprintHistory.removeAll()
-        cacheReuseHistory.removeAll()
-        cacheRebuildHistory.removeAll()
+        cacheHitRateHistory.removeAll()
+        cacheMemoryPressureHistory.removeAll()
         currentPhaseElapsedHistory.removeAll()
         prefillDurationHistory.removeAll()
-        sessionBuildDurationHistory.removeAll()
+        cacheReusePromptHistory.removeAll()
+        cacheRebuildPromptHistory.removeAll()
+        cacheMatchQualityHistory.removeAll()
         lastGenerationTokenCount = 0
         lastPromptTokenCount = 0
-        lastCacheReuseTokenCount = 0
-        lastCacheRebuildTokenCount = 0
         lastPrefillDuration = 0
-        lastSessionBuildDuration = 0
+        lastCacheReusePromptTokenCount = 0
+        lastCacheRebuildPromptTokenCount = 0
+    }
+
+    var currentCacheMatchQualityPercent: Double {
+        let total = currentCacheMatchedPromptTokens + currentCacheRebuiltPromptTokens
+        guard total > 0 else { return 0 }
+        return (Double(currentCacheMatchedPromptTokens) / Double(total)) * 100
+    }
+
+    var totalCacheMatchQualityPercent: Double {
+        let total = totalCacheReusePromptTokens + totalCacheRebuildPromptTokens
+        guard total > 0 else { return 0 }
+        return (Double(totalCacheReusePromptTokens) / Double(total)) * 100
     }
 }
