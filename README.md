@@ -7,8 +7,9 @@ Native macOS app for running local LLMs on Apple Silicon via [MLX](https://githu
 | Alias | Model | Context | Loader | Capabilities |
 |-------|-------|---------|--------|-------------|
 | `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | `VLMModelFactory` | Vision, tool use (`tool_code` blocks) |
-| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | `VLMModelFactory` | Vision, tool use (`<tool_call>` tags) |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `LLMModelFactory` | Vision, thinking mode, tool use |
+| `qwen` | `mlx-community/Qwen3.5-4B-MLX-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
+| `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
+| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
 | `stheno` | `synk/L3-8B-Stheno-v3.2-MLX` | 8k | `LLMModelFactory` | Text-only, llama-based |
 
 Any model in MLX format on HuggingFace can be added — there is no restriction on uploader or architecture.
@@ -33,7 +34,7 @@ open "build/Debug/MLX Server.app"
 - **Native chat documents** — save chats as `.mlxchat` package documents, reopen them from File > Open Chat or by double-clicking them in Finder, and continue the conversation with restored model context, thinking blocks, and images
 - **Export chat** — File > Export Chat (Cmd+Shift+E) saves conversations as Markdown or RTF (Pages-compatible)
 - **Status bar** showing model name, context window, tokens/sec, token counts, GPU memory, API server status
-- **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+O` (open chat document), `Cmd+S` (save chat document), `Cmd+Shift+S` (save chat document as), `Cmd+Shift+E` (export), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3/4` (switch models)
+- **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+O` (open chat document), `Cmd+S` (save chat document), `Cmd+Shift+S` (save chat document as), `Cmd+Shift+E` (export), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3/4/5` (switch models)
 - **Scene management** — create and edit reusable roleplay/task presets from the New Chat flow or Settings
 - **Settings** (`Cmd+,`): default model, thinking mode toggle, base system prompt, scene management, API port, API auto-start, idle unload timeout
 - **Idle auto-unload** — model is unloaded after configurable idle time (resets on both user input and model output), reloaded on next request
@@ -75,7 +76,7 @@ Pass images as base64 data URIs in the `image_url` content part:
 }
 ```
 
-Text-only models such as `qwen3.5-9b` and `stheno` reject image inputs.
+Text-only models such as `stheno` reject image inputs.
 
 ### Tool Use
 

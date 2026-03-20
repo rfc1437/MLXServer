@@ -52,8 +52,9 @@ open "build/Debug/MLX Server.app"
 | Alias | HuggingFace ID | Notes |
 |-------|---------------|-------|
 | `gemma` | `mlx-community/gemma-3-4b-it-4bit` | Vision + tool use via `tool_code` blocks (128k context) |
-| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | Vision + tool use via `<tool_call>` tags (256k context) |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | Thinking mode, tool use (256k context) |
+| `qwen` | `mlx-community/Qwen3.5-4B-MLX-4bit` | Vision + thinking mode + tool use via `<tool_call>` tags (256k context) |
+| `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | Vision + thinking mode + tool use via `<tool_call>` tags (256k context) |
+| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | Vision + thinking mode + tool use via `<tool_call>` tags (256k context) |
 
 Any model in MLX format on HuggingFace can be added — no restriction on uploader or architecture.
 
