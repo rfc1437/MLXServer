@@ -120,6 +120,124 @@ final class APIServerRewriteTests: XCTestCase {
         XCTAssertGreaterThan(secondLiveSnapshot.cacheMatchDepth, 0)
     }
 
+    func testVisionPromptCachesAndReusesSameImageRequest() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let lookups = LookupEventCollector()
+        APIServer.debugLookupEventHandler = { event in
+            Task {
+                await lookups.record(event)
+            }
+        }
+        defer {
+            APIServer.debugLookupEventHandler = nil
+        }
+
+        let request = visionRequest(dataURI: TestImageFixtures.primaryDataURI, prompt: "Describe this image in one word.")
+
+        _ = try await sendChatCompletion(request, port: harness.port)
+        _ = try await sendChatCompletion(request, port: harness.port)
+
+        try await waitUntil(timeoutSeconds: 5) {
+            let events = await lookups.events()
+            return events.count >= 2
+        }
+
+        let events = await lookups.events()
+        let secondLookup = try XCTUnwrap(events.last)
+        XCTAssertTrue(secondLookup.isHit)
+        XCTAssertEqual(secondLookup.matchedTokenCount, secondLookup.promptTokenCount)
+    }
+
+    func testVisionPromptDifferentImageMissesCache() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let lookups = LookupEventCollector()
+        APIServer.debugLookupEventHandler = { event in
+            Task {
+                await lookups.record(event)
+            }
+        }
+        defer {
+            APIServer.debugLookupEventHandler = nil
+        }
+
+        _ = try await sendChatCompletion(visionRequest(dataURI: TestImageFixtures.primaryDataURI, prompt: "Describe this image in one word."), port: harness.port)
+        _ = try await sendChatCompletion(visionRequest(dataURI: TestImageFixtures.alternateDataURI, prompt: "Describe this image in one word."), port: harness.port)
+
+        try await waitUntil(timeoutSeconds: 5) {
+            let events = await lookups.events()
+            return events.count >= 2
+        }
+
+        let events = await lookups.events()
+        let secondLookup = try XCTUnwrap(events.last)
+        XCTAssertFalse(secondLookup.isHit)
+        XCTAssertEqual(secondLookup.matchedTokenCount, 0)
+    }
+
+    func testTextOnlyFollowUpReusesEarlierImagePrefix() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let lookups = LookupEventCollector()
+        APIServer.debugLookupEventHandler = { event in
+            Task {
+                await lookups.record(event)
+            }
+        }
+        defer {
+            APIServer.debugLookupEventHandler = nil
+        }
+
+        let firstRequest = visionRequest(dataURI: TestImageFixtures.primaryDataURI, prompt: "Describe this image in one short word.")
+        let firstResponse = try await sendChatCompletion(firstRequest, port: harness.port)
+        let assistantContent = try XCTUnwrap(firstResponse.choices.first?.message.content)
+
+        let followUpRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(
+                    role: "user",
+                    content: .parts([
+                        APIContentPart(type: "text", text: "Describe this image in one short word.", image_url: nil),
+                        APIContentPart(type: "image_url", text: nil, image_url: APIImageURL(url: TestImageFixtures.primaryDataURI, detail: nil))
+                    ]),
+                    name: nil,
+                    tool_calls: nil,
+                    tool_call_id: nil
+                ),
+                APIChatMessage(role: "assistant", content: .text(assistantContent), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Now answer in one word: what color is the sky?"), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        _ = try await sendChatCompletion(followUpRequest, port: harness.port)
+
+        try await waitUntil(timeoutSeconds: 5) {
+            let events = await lookups.events()
+            return events.count >= 2
+        }
+
+        let events = await lookups.events()
+        let secondLookup = try XCTUnwrap(events.last)
+        XCTAssertTrue(secondLookup.isHit)
+        XCTAssertGreaterThan(secondLookup.matchedTokenCount, 0)
+        XCTAssertLessThan(secondLookup.matchedTokenCount, secondLookup.promptTokenCount)
+    }
+
     func testSecondIdenticalRequestIsFullCacheHitWithZeroRebuiltPromptTokens() async throws {
         let harness = try await makeHarness()
         defer { harness.stop() }
@@ -1214,6 +1332,34 @@ final class APIServerRewriteTests: XCTestCase {
         }
 
         return TestHarness(server: server, modelManager: modelManager, port: port)
+    }
+
+    private func visionRequest(dataURI: String, prompt: String) -> APIChatCompletionRequest {
+        APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(
+                    role: "user",
+                    content: .parts([
+                        APIContentPart(type: "text", text: prompt, image_url: nil),
+                        APIContentPart(type: "image_url", text: nil, image_url: APIImageURL(url: dataURI, detail: nil))
+                    ]),
+                    name: nil,
+                    tool_calls: nil,
+                    tool_call_id: nil
+                )
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
     }
 
     private func sendChatCompletion(_ request: APIChatCompletionRequest, port: UInt16) async throws -> APIChatCompletionResponse {

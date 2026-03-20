@@ -109,6 +109,21 @@ final class TokenPrefixCacheTests: XCTestCase {
         XCTAssertEqual(cache.debugTrieNodeCount(), 1)
     }
 
+    func testCheckoutHitDoesNotCountAsEviction() {
+        let cache = TokenPrefixCache(
+            memoryBudgetBytes: 10_000,
+            estimateBytesProvider: { _ in 1_024 }
+        )
+
+        cache.store(entryId: UUID(), kvCache: [], cacheKey: [1, 2, 3], modelId: "model")
+
+        let lease = cache.lookup(cacheKey: [1, 2, 3, 4], modelId: "model")
+        let snapshot = cache.snapshot()
+
+        XCTAssertTrue(lease.isHit)
+        XCTAssertEqual(snapshot.totalEvictions, 0)
+    }
+
     func testSnapshotReportsHitRateAndTokenTotals() {
         let cache = TokenPrefixCache(
             memoryBudgetBytes: 10_000,

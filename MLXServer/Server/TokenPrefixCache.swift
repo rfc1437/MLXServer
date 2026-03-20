@@ -123,12 +123,12 @@ final class TokenPrefixCache: @unchecked Sendable {
             }
         }
 
-        if let match = bestMatch,
-           var entry = entries[match.entryId] {
+          if let match = bestMatch,
+              var entry = entries[match.entryId] {
             entry.lastAccessAt = now
             entry.hitCount += 1
             entries[match.entryId] = entry
-            removeEntryLocked(entry)
+                removeEntryLocked(entry, countAsEviction: false)
             stats.totalHits += 1
             stats.totalPrefixHits += 1
             lock.unlock()
@@ -152,7 +152,8 @@ final class TokenPrefixCache: @unchecked Sendable {
             return superLease
         }
 
-        if realTokenCount > 0,
+          if !walkedFullKey,
+              realTokenCount > 0,
            let lcpLease = findLCPMatchLocked(
                below: node,
                sharedRealTokenCount: realTokenCount,
@@ -190,7 +191,7 @@ final class TokenPrefixCache: @unchecked Sendable {
 
         if let oldId = node.entryId,
            let oldEntry = entries[oldId] {
-            removeEntryLocked(oldEntry)
+            removeEntryLocked(oldEntry, countAsEviction: false)
         }
 
         node.entryId = entryId
@@ -285,7 +286,7 @@ final class TokenPrefixCache: @unchecked Sendable {
             now.timeIntervalSince($0.lastAccessAt) > idleTTL
         }
         for entry in expired {
-            removeEntryLocked(entry)
+            removeEntryLocked(entry, countAsEviction: true)
         }
     }
 
@@ -294,11 +295,11 @@ final class TokenPrefixCache: @unchecked Sendable {
             guard let victim = entries.values.min(by: evictionOrder) else {
                 break
             }
-            removeEntryLocked(victim)
+            removeEntryLocked(victim, countAsEviction: true)
         }
     }
 
-    private func removeEntryLocked(_ entry: CacheEntry) {
+    private func removeEntryLocked(_ entry: CacheEntry, countAsEviction: Bool) {
         guard entries[entry.id] != nil else { return }
 
         var node = root
@@ -321,7 +322,9 @@ final class TokenPrefixCache: @unchecked Sendable {
 
         currentMemoryBytes = max(0, currentMemoryBytes - entry.estimatedBytes)
         entries.removeValue(forKey: entry.id)
-        stats.totalEvictions += 1
+        if countAsEviction {
+            stats.totalEvictions += 1
+        }
     }
 
     private func evictionOrder(lhs: CacheEntry, rhs: CacheEntry) -> Bool {
@@ -374,7 +377,7 @@ final class TokenPrefixCache: @unchecked Sendable {
         updatedEntry.lastAccessAt = now
         updatedEntry.hitCount += 1
         entries[entry.id] = updatedEntry
-        removeEntryLocked(updatedEntry)
+        removeEntryLocked(updatedEntry, countAsEviction: false)
         stats.totalHits += 1
         stats.totalSupersequenceHits += 1
 
@@ -427,7 +430,7 @@ final class TokenPrefixCache: @unchecked Sendable {
         updatedEntry.lastAccessAt = now
         updatedEntry.hitCount += 1
         entries[entry.id] = updatedEntry
-        removeEntryLocked(updatedEntry)
+        removeEntryLocked(updatedEntry, countAsEviction: false)
         stats.totalHits += 1
         stats.totalLCPHits += 1
 

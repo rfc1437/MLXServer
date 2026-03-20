@@ -323,7 +323,10 @@ final class APIServer {
         let preparedInference: InferenceEngine.PreparedInference
         do {
             let prepareStartedAt = Date()
-            preparedInference = try await engine.prepare(preparedPrompt.userInput)
+            preparedInference = try await engine.prepare(
+                preparedPrompt.userInput,
+                imageFingerprints: preparedPrompt.imageFingerprints
+            )
             if preparedPrompt.containsImages {
                 LiveCounters.shared.visionProcessingCompleted(
                     requestId: requestId,
@@ -336,10 +339,8 @@ final class APIServer {
             return
         }
 
-        // Vision requests stay uncached until image fingerprinting lands.
-        let cacheKey = preparedInference.hasImages ? nil : preparedInference.tokens
-        let lease = cacheKey.map { TokenPrefixCache.shared.lookup(cacheKey: $0, modelId: currentModelId) }
-            ?? TokenPrefixCache.CacheLease(entryId: UUID(), kvCache: nil, matchedTokenCount: 0, isHit: false)
+        let cacheKey = preparedInference.cacheKey
+        let lease = TokenPrefixCache.shared.lookup(cacheKey: cacheKey, modelId: currentModelId)
 
         Self.debugLookupEventHandler?(
             DebugLookupEvent(
@@ -405,8 +406,7 @@ final class APIServer {
             )
         }
 
-          if let cacheKey,
-              !isShuttingDown,
+          if !isShuttingDown,
            result.succeeded || result.cancelled {
             Self.storePromptCache(
                 streamHandle.workingCache,
@@ -669,7 +669,9 @@ final class APIServer {
         cacheKey: [Int],
         modelId: String
     ) {
-        _ = trimGeneratedTokens(cache, promptTokenCount: promptTokenCount)
+        guard trimGeneratedTokens(cache, promptTokenCount: promptTokenCount) else {
+            return
+        }
         TokenPrefixCache.shared.store(
             entryId: entryId,
             kvCache: cache,

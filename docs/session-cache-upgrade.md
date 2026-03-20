@@ -2575,7 +2575,7 @@ Validation note: `PromptBuilder.swift` is now covered by both shaping-parity uni
 7. [x] **`APIServer.swift` rewrite** — Wire everything together. Replace ChatSession with InferenceEngine, ConversationSessionCache with TokenPrefixCache, add PromptBuilder and StreamingSSEEncoder.
 8. [x] **Delete `ConversationSessionCache.swift`** — Only after APIServer is fully migrated and tested.
 
-Validation note: `APIServer.swift` now routes the API path through `PromptBuilder`, `InferenceEngine`, `TokenPrefixCache`, and `StreamingSSEEncoder`, and the full repository test workflow is green. Image-bearing requests intentionally bypass prefix-cache reuse for now until image fingerprinting is implemented.
+Validation note: `APIServer.swift` now routes the API path through `PromptBuilder`, `InferenceEngine`, `TokenPrefixCache`, and `StreamingSSEEncoder`, and the full repository test workflow is green. Image-bearing requests now participate in prefix-cache reuse via image-aware cache keys built from prompt tokens plus stable image fingerprints, preventing false hits across different images while enabling same-image reuse.
 
 ### Phase 4: Statistics & Monitoring
 
@@ -2583,13 +2583,13 @@ Validation note: `APIServer.swift` now routes the API path through `PromptBuilde
 10. [x] **InferenceStats upgrade** — Add new snapshot fields, new time-series histories. Switch from ConversationSessionCache.snapshot() to TokenPrefixCache.snapshot().
 11. [x] **MonitorView upgrade** — Add TTFT chart, prefill speed chart, cache match quality chart, cache memory budget chart. Update cache card and cumulative tiles. Add vision encoder time chart (conditional on VL model). Replace session list with cache entry list.
 
-Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly and `MonitorView.swift` now surfaces TTFT, prefill speed, cache match depth, cache memory pressure, disconnect totals, and vision prepare time from `LiveCounters`. Match-type hit breakdown is still open because it depends on the advanced cache matching work in Phase 5.
+Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly and `MonitorView.swift` now surfaces TTFT, prefill speed, cache match depth, cache memory pressure, disconnect totals, vision prepare time, and the prefix/supersequence/LCP hit breakdown from `LiveCounters` and `TokenPrefixCache`.
 
 ### Phase 5: Advanced Cache Matching
 
-12. **Supersequence matching** — Add `findSupersequenceMatchLocked()` and `trimCacheByOffset()` to `TokenPrefixCache`. Extend `lookup()` with subtree scan after prefix walk. Test: store a long entry, look up a shorter prefix of it → cache hit with trimmed KV.
-13. **LCP matching** — Add `findLCPMatchLocked()` to `TokenPrefixCache`. Extend `lookup()` with sibling-subtree scan at divergence point. Test: store `[SYS, A, B, X]`, look up `[SYS, A, B, Y]` → cache hit covering `[SYS, A, B]`, remaining `[Y]`.
-14. **Match stats** — Add `totalPrefixHits`, `totalSupersequenceHits`, `totalLCPHits` to stats and snapshot. Surface hit breakdown in MonitorView cache card.
+12. [x] **Supersequence matching** — `TokenPrefixCache` now includes `findSupersequenceMatchLocked()` and `trimCacheByOffset()`, and `lookup()` performs a subtree scan after a full-key walk with no direct entry. Coverage includes both logical cache tests and a model-backed test that verifies the leased KV cache is trimmed to the shorter prefix length.
+13. [x] **LCP matching** — `TokenPrefixCache` now includes `findLCPMatchLocked()`, and `lookup()` attempts LCP reuse only on actual divergence. Coverage includes direct cache tests for divergent suffix reuse and shallow-prefix rejection, plus model-backed same-system/different-user reuse validation.
+14. [x] **Match stats** — `TokenPrefixCache`, `InferenceStats`, and `MonitorView` now track and surface `prefixHits`, `supersequenceHits`, and `lcpHits` in the cache snapshot and monitor cache card.
 
 ### Phase 6: KV Cache Quantization
 
@@ -2654,13 +2654,13 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 - [ ] Multiple images in a single message → all images processed correctly
 - [ ] Image + text in same message → both contribute to response
 - [ ] Images in earlier messages, text-only follow-up → cache hit (vision encoder skipped)
-- [ ] Same conversation, same images → cache hit on subsequent requests
-- [ ] Same conversation, different image swapped → cache miss, fresh vision processing
+- [x] Same conversation, same images → cache hit on subsequent requests
+- [x] Same conversation, different image swapped → cache miss, fresh vision processing
 - [ ] Text-only conversation on a VL model → no vision overhead, normal cache behavior
 - [ ] Large images (4K+) → properly resized by UserInputProcessor, no OOM
 - [ ] Base64 data-URI images decoded correctly (PNG, JPEG)
-- [ ] Image fingerprinting: same image bytes → same fingerprint → cache hit
-- [ ] Image fingerprinting: different images → different fingerprints → cache miss
+- [x] Image fingerprinting: same image bytes → same fingerprint → cache hit
+- [x] Image fingerprinting: different images → different fingerprints → cache miss
 - [ ] Non-vision model rejects image inputs with clear error message
 - [ ] Mixed: image in user msg 1, assistant response, text-only user msg 2 → cache covers all of msg 1 + response
 

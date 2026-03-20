@@ -7,6 +7,7 @@ enum PromptBuilder {
         let instructions: String
         let chatMessages: [Chat.Message]
         let messageSignatures: [UInt64]
+        let imageFingerprints: [UInt64]
         let estimatedBytes: Int
         let estimatedPromptTokens: Int
         let containsImages: Bool
@@ -36,6 +37,7 @@ enum PromptBuilder {
         let isQwen = modelId.lowercased().contains("qwen")
         var chatMessages: [Chat.Message] = []
         var messageSignatures: [UInt64] = []
+        var imageFingerprints: [UInt64] = []
         var estimatedBytes = instructions.utf8.count
         var containsImages = false
 
@@ -64,6 +66,7 @@ enum PromptBuilder {
             for urlString in imageURLs {
                 if let decoded = ImageDecoder.decode(urlString) {
                     messageImages.append(decoded.image)
+                    imageFingerprints.append(imageFingerprint(urlString))
                     messageImageBytes += decoded.estimatedBytes
                 }
             }
@@ -99,12 +102,22 @@ enum PromptBuilder {
             instructions: instructions,
             chatMessages: chatMessages,
             messageSignatures: messageSignatures,
+            imageFingerprints: imageFingerprints,
             estimatedBytes: estimatedBytes,
             estimatedPromptTokens: estimatedPromptTokens,
             containsImages: containsImages,
             additionalContext: additionalContext,
             userInput: userInput
         )
+    }
+
+    private static func imageFingerprint(_ source: String) -> UInt64 {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in source.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return hash
     }
 
     private static func messageSignature(role: Chat.Message.Role, content: String, imageURLs: [String]) -> UInt64 {
