@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var documentErrorMessage: String?
     @State private var exportErrorMessage: String?
 
+    private var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
     var body: some View {
         exportedContent
     }
@@ -30,11 +34,11 @@ struct ContentView: View {
                         delegate.chatViewModel = vm
                     }
                     // Auto-start API server if configured
-                    if Preferences.apiAutoStart {
+                    if Preferences.apiAutoStart && !isRunningTests {
                         vm.startAPIServer()
                     }
                     // Restore autosaved session if no document is being opened
-                    if !documentController.hasPendingOpenRequests {
+                    if !documentController.hasPendingOpenRequests && !isRunningTests {
                         Task {
                             await vm.restoreFromAutosave()
                         }

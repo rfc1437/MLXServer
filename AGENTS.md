@@ -6,9 +6,19 @@ Native macOS SwiftUI app for local LLMs on Apple Silicon via MLX. Provides a cha
 
 **Always use `./build.sh` to build the project** — never call `xcodebuild` directly. The script runs xcodegen first (to pick up new/removed files) and uses the correct scheme, destination, and build directory.
 
+**Always use `./test.sh` to run tests** — it regenerates the Xcode project first and runs the shared `MLXServer` test scheme so test runs are reproducible.
+
+Tests are required for finished work when the change is reasonably testable.
+Relevant tests must exist and must pass before work is considered complete.
+
+Pre-existing errors don't exist: every error is your responsibility and you have to fix it before claiming you are done.
+
 ```bash
 # Build (requires xcodegen: brew install xcodegen)
 ./build.sh
+
+# Test
+./test.sh
 
 # Run
 open "build/Debug/MLX Server.app"

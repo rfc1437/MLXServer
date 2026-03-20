@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import MLXLMCommon
 import Network
@@ -288,7 +287,7 @@ final class APIServer {
             var messageImages: [UserInput.Image] = []
             var messageImageBytes = 0
             for urlString in imageURLs {
-                if let decoded = decodeBase64Image(urlString) {
+                if let decoded = ImageDecoder.decode(urlString) {
                     messageImages.append(decoded.image)
                     messageImageBytes += decoded.estimatedBytes
                 }
@@ -446,28 +445,6 @@ final class APIServer {
 
         LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: result.completionTokens)
         modelManager.touchActivity()
-    }
-
-    /// Decode a base64 data URI (data:image/png;base64,...) into a UserInput.Image.
-    private func decodeBase64Image(_ urlString: String) -> DecodedImage? {
-        // Handle data URIs: data:image/png;base64,<data>
-        let base64String: String
-        if urlString.hasPrefix("data:") {
-            guard let commaIndex = urlString.firstIndex(of: ",") else { return nil }
-            base64String = String(urlString[urlString.index(after: commaIndex)...])
-        } else {
-            // Could be a plain base64 string
-            base64String = urlString
-        }
-
-        guard let data = Data(base64Encoded: base64String),
-              let nsImage = NSImage(data: data),
-              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return nil
-        }
-
-                let estimatedBytes = max(data.count, cgImage.width * cgImage.height * 4)
-                return DecodedImage(image: .ciImage(CIImage(cgImage: cgImage)), estimatedBytes: estimatedBytes)
     }
 
     // MARK: - Non-streaming response
@@ -885,11 +862,6 @@ final class APIServer {
 
         return (responseContent, apiToolCalls, finishReason)
     }
-}
-
-private struct DecodedImage {
-    let image: UserInput.Image
-    let estimatedBytes: Int
 }
 
 // MARK: - HTTP request parser

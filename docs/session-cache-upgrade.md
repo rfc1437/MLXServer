@@ -2558,9 +2558,9 @@ Each step should be independently buildable and testable.
 
 ### Phase 1: Foundation (no behavior change yet)
 
-1. **`CancellationToken.swift`** — Standalone utility, no dependencies. Write + unit test.
-2. **`ImageDecoder.swift`** — Extract from APIServer. Mechanical move.
-3. **`StreamingSSEEncoder.swift`** — Standalone, testable in isolation. Verify JSON output matches current `JSONEncoder` output.
+1. [x] **`CancellationToken.swift`** — Standalone utility, no dependencies. Write + unit test.
+2. [x] **`ImageDecoder.swift`** — Extract from APIServer. Mechanical move.
+3. [x] **`StreamingSSEEncoder.swift`** — Standalone, testable in isolation. Verify JSON output matches current `JSONEncoder` output.
 
 ### Phase 2: Core Engine
 
