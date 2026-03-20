@@ -54,15 +54,6 @@ struct ModelConfig: Identifiable, Hashable {
             supportsImages: false,
             supportsTools: false
         ),
-        ModelConfig(
-            id: "unslopnemo",
-            repoId: "mlx-community/UnslopNemo-12B-v4.1-4bit",
-            displayName: "UnslopNemo 12B",
-            contextLength: 131_072,
-            loaderKind: .llm,
-            supportsImages: false,
-            supportsTools: false
-        ),
     ]
 
     static let `default` = availableModels[0]
