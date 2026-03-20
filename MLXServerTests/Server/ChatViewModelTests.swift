@@ -3,9 +3,9 @@ import XCTest
 
 @MainActor
 final class ChatViewModelTests: XCTestCase {
-    func testGemmaChatViewModelSendProducesAssistantReply() async throws {
+    func testQwenChatViewModelSendProducesAssistantReply() async throws {
         let modelManager = ModelManager()
-        let config = try XCTUnwrap(ModelConfig.resolve("gemma"))
+        let config = try XCTUnwrap(ModelConfig.resolve("qwen3.5-0.8b"))
         await modelManager.loadModel(config)
         defer { modelManager.unloadModel() }
 

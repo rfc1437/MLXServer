@@ -114,7 +114,7 @@ final class PromptBuilderTests: XCTestCase {
             n: nil
         )
 
-        let prepared = PromptBuilder.build(from: request, modelId: "mlx-community/Qwen3.5-4B-MLX-4bit", thinkingEnabled: true)
+        let prepared = PromptBuilder.build(from: request, modelId: "mlx-community/Qwen3.5-0.8B-4bit", thinkingEnabled: true)
 
         XCTAssertEqual(prepared.chatMessages.count, 1)
         XCTAssertTrue(prepared.chatMessages[0].content.contains("Let me check."))

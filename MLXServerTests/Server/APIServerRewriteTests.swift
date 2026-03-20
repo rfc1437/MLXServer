@@ -3,8 +3,11 @@ import XCTest
 @testable import MLX_Server
 
 final class APIServerRewriteTests: XCTestCase {
+    private let genericModelId = "qwen3.5-0.8b"
+    private let genericModelRepoId = "mlx-community/Qwen3.5-0.8B-4bit"
+
     func testQwenNonStreamingChatCompletionCachesAndReusesPrompt() async throws {
-        let harness = try await makeHarness(initialModelId: "qwen")
+        let harness = try await makeHarness(initialModelId: self.genericModelId)
         defer { harness.stop() }
 
         let lookups = LookupEventCollector()
@@ -18,7 +21,7 @@ final class APIServerRewriteTests: XCTestCase {
         }
 
         let request = APIChatCompletionRequest(
-            model: "qwen",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Reply with exactly one short word."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -39,7 +42,7 @@ final class APIServerRewriteTests: XCTestCase {
 
         try await waitUntil(timeoutSeconds: 5) {
             let snapshot = TokenPrefixCache.shared.snapshot()
-            return snapshot.totalEntries > 0 && snapshot.entries.allSatisfy { $0.modelId == "qwen" }
+            return snapshot.totalEntries > 0 && snapshot.entries.allSatisfy { $0.modelId == self.genericModelId }
         }
 
         let firstSnapshot = TokenPrefixCache.shared.snapshot()
@@ -77,7 +80,7 @@ final class APIServerRewriteTests: XCTestCase {
         defer { harness.stop() }
 
         let request = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Reply with exactly one short word."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -179,7 +182,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testTextOnlyFollowUpReusesEarlierImagePrefix() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let lookups = LookupEventCollector()
@@ -192,7 +195,7 @@ final class APIServerRewriteTests: XCTestCase {
             APIServer.debugLookupEventHandler = nil
         }
 
-        let firstRequest = visionRequest(dataURI: TestImageFixtures.primaryDataURI, prompt: "Describe this image in one short word.")
+        let firstRequest = visionRequest(modelId: "gemma", dataURI: TestImageFixtures.primaryDataURI, prompt: "Describe this image in one short word.")
         let firstResponse = try await sendChatCompletion(firstRequest, port: harness.port)
         let assistantContent = try XCTUnwrap(firstResponse.choices.first?.message.content)
 
@@ -253,7 +256,7 @@ final class APIServerRewriteTests: XCTestCase {
         }
 
         let request = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Answer with one word: ocean."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -284,7 +287,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testSingleTurnContinuationProducesPartialCacheHit() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let firstRequest = APIChatCompletionRequest(
@@ -334,7 +337,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testSameSystemPromptDifferentUserMessageReusesSystemPrefix() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let lookups = LookupEventCollector()
@@ -401,7 +404,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testServerStoredCacheIsDirectlyReusableForSameSystemDifferentUserPrompt() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let firstRequest = APIChatCompletionRequest(
@@ -447,7 +450,7 @@ final class APIServerRewriteTests: XCTestCase {
         let engine = InferenceEngine(container: container)
         let preparedPrompt = PromptBuilder.build(
             from: secondRequest,
-            modelId: ModelConfig.default.repoId,
+            modelId: "mlx-community/gemma-3-4b-it-4bit",
             thinkingEnabled: Preferences.enableThinking
         )
         let preparedInference = try await engine.prepare(preparedPrompt.userInput)
@@ -463,7 +466,7 @@ final class APIServerRewriteTests: XCTestCase {
         defer { harness.stop() }
 
         let firstRequest = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "system", content: .text("System Alpha Unique Tokens"), name: nil, tool_calls: nil, tool_call_id: nil),
                 APIChatMessage(role: "user", content: .text("Answer in one word: tree."), name: nil, tool_calls: nil, tool_call_id: nil)
@@ -481,7 +484,7 @@ final class APIServerRewriteTests: XCTestCase {
         )
 
         let secondRequest = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "system", content: .text("Completely Different Beta Markers"), name: nil, tool_calls: nil, tool_call_id: nil),
                 APIChatMessage(role: "user", content: .text("Answer in one word: tree."), name: nil, tool_calls: nil, tool_call_id: nil)
@@ -512,7 +515,7 @@ final class APIServerRewriteTests: XCTestCase {
         let harness = try await makeHarness()
         defer { harness.stop() }
 
-        Preferences.lastModelId = "gemma"
+        Preferences.lastModelId = self.genericModelId
         let request = APIChatCompletionRequest(
             model: nil,
             messages: [
@@ -590,7 +593,7 @@ final class APIServerRewriteTests: XCTestCase {
         }
 
         let qwenRequest = APIChatCompletionRequest(
-            model: "qwen",
+            model: "qwen3.5-0.8b",
             messages: [
                 APIChatMessage(role: "user", content: .text("Answer with one word: river."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -611,15 +614,15 @@ final class APIServerRewriteTests: XCTestCase {
         try await waitUntil(timeoutSeconds: 5) {
             let snapshot = TokenPrefixCache.shared.snapshot()
             let modelId = await MainActor.run { harness.modelManager.currentModel?.id }
-            return modelId == "qwen"
+            return modelId == "qwen3.5-0.8b"
                 && !snapshot.entries.isEmpty
-                && snapshot.entries.allSatisfy { $0.modelId == "qwen" }
+                && snapshot.entries.allSatisfy { $0.modelId == "qwen3.5-0.8b" }
         }
 
         let afterSwapSnapshot = TokenPrefixCache.shared.snapshot()
         let afterSwapEvents = await lookups.events()
         let firstQwenLookup = try XCTUnwrap(afterSwapEvents.last)
-        XCTAssertTrue(afterSwapSnapshot.entries.allSatisfy { $0.modelId == "qwen" })
+        XCTAssertTrue(afterSwapSnapshot.entries.allSatisfy { $0.modelId == "qwen3.5-0.8b" })
         XCTAssertFalse(firstQwenLookup.isHit)
         XCTAssertEqual(firstQwenLookup.matchedTokenCount, 0)
 
@@ -639,7 +642,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testStreamingChatCompletionReusesCacheAcrossThreeProgressivelyLongerTurns() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let firstRequest = APIChatCompletionRequest(
@@ -742,7 +745,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testStreamingChatCompletionReusesCacheAcrossToolBoundary() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let tools = [mockWeatherTool]
@@ -847,7 +850,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testStreamingChatCompletionReusesCacheAcrossMultipleToolTurns() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let tools = [mockWeatherTool]
@@ -994,7 +997,7 @@ final class APIServerRewriteTests: XCTestCase {
         defer { harness.stop() }
 
         let request = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Count from one to twenty with commas, using many tokens."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -1053,7 +1056,7 @@ final class APIServerRewriteTests: XCTestCase {
         defer { harness.stop() }
 
         let request = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Count from one to fifty with commas, using many tokens."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -1120,7 +1123,7 @@ final class APIServerRewriteTests: XCTestCase {
         let harness = try await makeHarness()
 
         let request = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Count from one to fifty with commas, using many tokens."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -1189,7 +1192,7 @@ final class APIServerRewriteTests: XCTestCase {
         defer { harness.stop() }
 
         let request = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Count from one to forty with commas, using many tokens."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -1218,7 +1221,7 @@ final class APIServerRewriteTests: XCTestCase {
         }
 
         let recoveryRequest = APIChatCompletionRequest(
-            model: "gemma",
+            model: self.genericModelId,
             messages: [
                 APIChatMessage(role: "user", content: .text("Reply with exactly one short word."), name: nil, tool_calls: nil, tool_call_id: nil)
             ],
@@ -1241,7 +1244,7 @@ final class APIServerRewriteTests: XCTestCase {
     }
 
     func testStreamingToolCallChunksArriveInOpenAICompatibleOrder() async throws {
-        let harness = try await makeHarness()
+        let harness = try await makeHarness(initialModelId: "gemma")
         defer { harness.stop() }
 
         let detailed = try await sendStreamingChatCompletionDetailed(
@@ -1311,7 +1314,7 @@ final class APIServerRewriteTests: XCTestCase {
         )
     }
 
-    private func makeHarness(initialModelId: String = "gemma") async throws -> TestHarness {
+    private func makeHarness(initialModelId: String = "qwen3.5-0.8b") async throws -> TestHarness {
         let modelManager = await MainActor.run { ModelManager() }
         let config = try XCTUnwrap(ModelConfig.resolve(initialModelId))
 
@@ -1334,9 +1337,9 @@ final class APIServerRewriteTests: XCTestCase {
         return TestHarness(server: server, modelManager: modelManager, port: port)
     }
 
-    private func visionRequest(dataURI: String, prompt: String) -> APIChatCompletionRequest {
+    private func visionRequest(modelId: String = "qwen3.5-0.8b", dataURI: String, prompt: String) -> APIChatCompletionRequest {
         APIChatCompletionRequest(
-            model: "gemma",
+            model: modelId,
             messages: [
                 APIChatMessage(
                     role: "user",

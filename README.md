@@ -14,6 +14,8 @@ Native macOS app for running local LLMs on Apple Silicon via [MLX](https://githu
 
 Any model in MLX format on HuggingFace can be added — there is no restriction on uploader or architecture.
 
+Developer note: the test suite uses `qwen3.5-0.8b` as the main live-model target because it is substantially faster and lighter than the larger Qwen variants, but some tests still run on Gemma 3 because they validate Gemma-specific prompt shaping, cache-reuse behavior, and tool-call behavior that did not match Qwen3.5 0.8B closely enough.
+
 ## Quick Start
 
 Requires macOS 15+, Xcode 16.4+, and `xcodegen` (`brew install xcodegen`).
