@@ -209,4 +209,28 @@ final class TokenPrefixCacheTests: XCTestCase {
         XCTAssertEqual(snapshot.supersequenceHits, 0)
         XCTAssertEqual(snapshot.lcpHits, 0)
     }
+
+    func testComputeMemoryBudgetUsesFallbackWhenDeviceUnavailable() {
+        let budget = TokenPrefixCache.computeMemoryBudget(recommendedWorkingSetSize: nil)
+
+        XCTAssertEqual(budget, 512 * 1024 * 1024)
+    }
+
+    func testComputeMemoryBudgetClampsToMinimumFloor() {
+        let budget = TokenPrefixCache.computeMemoryBudget(recommendedWorkingSetSize: 512 * 1024 * 1024)
+
+        XCTAssertEqual(budget, 256 * 1024 * 1024)
+    }
+
+    func testComputeMemoryBudgetUsesTwentyPercentOfWorkingSet() {
+        let budget = TokenPrefixCache.computeMemoryBudget(recommendedWorkingSetSize: 8 * 1024 * 1024 * 1024)
+
+        XCTAssertEqual(budget, Int(Double(8 * 1024 * 1024 * 1024) * 0.20))
+    }
+
+    func testComputeMemoryBudgetClampsToMaximumCap() {
+        let budget = TokenPrefixCache.computeMemoryBudget(recommendedWorkingSetSize: 80 * 1024 * 1024 * 1024)
+
+        XCTAssertEqual(budget, 8 * 1024 * 1024 * 1024)
+    }
 }

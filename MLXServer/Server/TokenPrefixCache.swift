@@ -459,9 +459,17 @@ final class TokenPrefixCache: @unchecked Sendable {
 
     private static func computeMemoryBudget() -> Int {
         guard let device = MTLCreateSystemDefaultDevice() else {
+            return computeMemoryBudget(recommendedWorkingSetSize: nil)
+        }
+        return computeMemoryBudget(recommendedWorkingSetSize: Int(device.recommendedMaxWorkingSetSize))
+    }
+
+    static func computeMemoryBudget(recommendedWorkingSetSize: Int?) -> Int {
+        guard let recommendedWorkingSetSize else {
             return 512 * 1024 * 1024
         }
-        let budget = Int(Double(device.recommendedMaxWorkingSetSize) * 0.20)
+
+        let budget = Int(Double(recommendedWorkingSetSize) * 0.20)
         return max(256 * 1024 * 1024, min(budget, 8 * 1024 * 1024 * 1024))
     }
 

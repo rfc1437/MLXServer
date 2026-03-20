@@ -2614,12 +2614,12 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 - [x] Conversation continuation (add 2+ messages, e.g. tool-use flow) → partial cache hit (not a miss!)
 - [x] Same system prompt, different user message → system prompt prefix cached and reused
 - [x] Different system prompt → no false cache hit
-- [ ] Model swap → cache invalidated, fresh generation works
+- [x] Model swap → cache invalidated, fresh generation works
 - [x] Idle unload + reload → cache invalidated, fresh generation works
 
 ### Memory Management
 
-- [ ] Memory budget computed correctly from Metal device
+- [x] Memory budget computed correctly from Metal device
 - [x] Entries evicted under memory pressure (oldest first)
 - [x] Expired entries pruned after 30 min idle
 - [x] Trie nodes cleaned up when entries are evicted (no memory leak)
@@ -2627,9 +2627,9 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Disconnect Handling
 
-- [ ] Client disconnects mid-stream → generation stops within ~200ms
+- [x] Client disconnects mid-stream → generation stops within ~200ms
 - [x] Partial KV cache from disconnected request is still stored for reuse
-- [ ] No Metal assertion failures on disconnect
+- [x] No Metal assertion failures on disconnect
 
 ### Streaming
 
@@ -2642,9 +2642,9 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Tool Use
 
-- [ ] Gemma tool_code blocks parsed correctly
-- [ ] Qwen `<tool_call>` tags parsed correctly
-- [ ] Framework `ToolCall` events handled correctly
+- [x] Gemma tool_code blocks parsed correctly
+- [x] Qwen `<tool_call>` tags parsed correctly
+- [x] Framework `ToolCall` events handled correctly
 - [x] Tool results round-trip correctly (user sends tool result → model sees it in context)
 - [x] finish_reason is "tool_calls" when tools are invoked
 
@@ -2700,9 +2700,9 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Compatibility
 
-- [ ] `GET /health` → `{"status":"ok"}`
-- [ ] `GET /v1/models` → model list with context windows
+- [x] `GET /health` → `{"status":"ok"}`
+- [x] `GET /v1/models` → model list with context windows
 - [x] Non-streaming `POST /v1/chat/completions` → full response
 - [x] Streaming `POST /v1/chat/completions` → SSE stream
-- [ ] Model field in request triggers model swap
-- [ ] UI chat (ChatViewModel) completely unaffected
+- [x] Model field in request triggers model swap
+- [x] UI chat (ChatViewModel) completely unaffected

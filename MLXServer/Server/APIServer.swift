@@ -728,7 +728,7 @@ final class APIServer {
         return text.isEmpty ? nil : text
     }
 
-    private static func resolveAssistantResponse(
+    static func resolveAssistantResponse(
         fullText: String,
         frameworkToolCalls: [MLXLMCommon.ToolCall],
         tools: [APIToolDefinition]?
