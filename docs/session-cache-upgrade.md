@@ -2564,9 +2564,11 @@ Each step should be independently buildable and testable.
 
 ### Phase 2: Core Engine
 
-4. **`PromptBuilder.swift`** — Convert API messages to UserInput. Test by comparing tokenized output to what ChatSession produces for the same messages.
-5. **`TokenPrefixCache.swift`** — The big one. Build trie + eviction + monitoring. Test: insert entries, verify lookup, verify eviction under memory pressure, verify trie cleanup.
-6. **`InferenceEngine.swift`** — Thin wrapper using `container.perform { ctx in MLXLMCommon.generate(input:cache:parameters:context:) }`. Test: run a simple prompt through it, verify output matches ChatSession output.
+4. [x] **`PromptBuilder.swift`** — Convert API messages to UserInput. Test by comparing tokenized output to what ChatSession produces for the same messages.
+5. [x] **`TokenPrefixCache.swift`** — The big one. Build trie + eviction + monitoring. Test: insert entries, verify lookup, verify eviction under memory pressure, verify trie cleanup.
+6. [x] **`InferenceEngine.swift`** — Thin wrapper using `container.perform { ctx in MLXLMCommon.generate(input:cache:parameters:context:) }`. Test: run a simple prompt through it, verify output matches ChatSession output.
+
+Validation note: `PromptBuilder.swift` is now covered by both shaping-parity unit tests and a model-backed tokenization parity test against the cached local Gemma 3 4B VLM. `InferenceEngine.swift` is now covered by a model-backed smoke test that compares one-token output and prompt-token counts against `ChatSession` on the same locally cached Gemma model.
 
 ### Phase 3: Integration
 
@@ -2614,8 +2616,8 @@ Each step should be independently buildable and testable.
 ### Memory Management
 
 - [ ] Memory budget computed correctly from Metal device
-- [ ] Entries evicted under memory pressure (oldest first)
-- [ ] Expired entries pruned after 30 min idle
+- [x] Entries evicted under memory pressure (oldest first)
+- [x] Expired entries pruned after 30 min idle
 - [ ] Trie nodes cleaned up when entries are evicted (no memory leak)
 - [ ] `snapshot()` reports accurate memory usage and hit rates
 
@@ -2628,7 +2630,7 @@ Each step should be independently buildable and testable.
 ### Streaming
 
 - [ ] SSE JSON is valid and parseable by standard clients
-- [ ] `StreamingSSEEncoder` output matches `JSONEncoder` output byte-for-byte (for content deltas)
+- [x] `StreamingSSEEncoder` output matches `JSONEncoder` output byte-for-byte (for content deltas)
 - [ ] Role delta sent once at stream start
 - [ ] Tool call chunks sent correctly
 - [ ] Final chunk has finish_reason and usage stats

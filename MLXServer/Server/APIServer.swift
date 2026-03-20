@@ -218,91 +218,16 @@ final class APIServer {
         }
 
         LiveCounters.shared.requestStarted(requestId: requestId, contextLength: contextLength)
-
-        // Convert API messages to Chat.Message, extracting images from content parts
-        var chatMessages: [Chat.Message] = []
-        var messageSignatures: [UInt64] = []
-        var images: [UserInput.Image] = []
-        var estimatedBytes = 0
         let currentModelRepoId = currentModel?.repoId ?? modelName
 
-        // Build the instructions string (system prompt + tool definitions).
-        // This is passed to ChatSession via `instructions:` rather than injected
-        // as history messages, so it avoids an expensive history-replay prefill.
-        var instructions: String = ""
-
-        // Collect system message text from the request
-        for msg in request.messages where msg.role == "system" {
-            let text = msg.content?.textContent ?? ""
-            if !text.isEmpty {
-                if !instructions.isEmpty { instructions += "\n\n" }
-                instructions += text
-            }
-        }
-
-        // Append tool definitions to instructions
-        if let tools = request.tools, !tools.isEmpty {
-            let toolSystemPrompt = ToolPromptBuilder.buildSystemPrompt(tools: tools, modelId: currentModelRepoId)
-            if !instructions.isEmpty { instructions += "\n\n" }
-            instructions += toolSystemPrompt
-        }
-
+        let preparedPrompt = PromptBuilder.build(
+            from: request,
+            modelId: currentModelRepoId,
+            thinkingEnabled: Preferences.enableThinking
+        )
         let isQwen = currentModelRepoId.lowercased().contains("qwen")
-        estimatedBytes += instructions.utf8.count
 
-        // Convert non-system messages to Chat.Message
-        for msg in request.messages where msg.role != "system" {
-            let role: Chat.Message.Role = switch msg.role {
-            case "assistant": .assistant
-            case "tool": .user
-            default: .user
-            }
-
-            var text = msg.content?.textContent ?? ""
-
-            // Format tool_call_id responses as tool_output for the model
-            if msg.role == "tool" {
-                if isQwen {
-                    // Qwen expects tool results as-is in a user message
-                    // (the role is already mapped to .user above)
-                } else {
-                    // Gemma expects tool results wrapped in ```tool_output``` blocks
-                    text = "```tool_output\n\(text)\n```"
-                }
-            }
-
-            // Format assistant tool_calls back into model-native format
-            if msg.role == "assistant", let toolCalls = msg.tool_calls, !toolCalls.isEmpty {
-                let formattedCalls: String
-                if isQwen {
-                    formattedCalls = ToolPromptBuilder.formatQwenToolCalls(toolCalls)
-                } else {
-                    formattedCalls = ToolPromptBuilder.formatGemmaToolCalls(toolCalls)
-                }
-                text = (text.isEmpty ? "" : text + "\n") + formattedCalls
-            }
-
-            // Extract base64 images from content parts
-            let imageURLs = msg.content?.imageURLs ?? []
-            var messageImages: [UserInput.Image] = []
-            var messageImageBytes = 0
-            for urlString in imageURLs {
-                if let decoded = ImageDecoder.decode(urlString) {
-                    messageImages.append(decoded.image)
-                    messageImageBytes += decoded.estimatedBytes
-                }
-            }
-
-            // Attach images to this specific message
-            chatMessages.append(Chat.Message(role: role, content: text, images: messageImages))
-            messageSignatures.append(
-                Self.messageSignature(role: role, content: text, imageURLs: imageURLs)
-            )
-            estimatedBytes += text.utf8.count + messageImageBytes
-            images.append(contentsOf: messageImages)
-        }
-
-        if !images.isEmpty, currentModel?.supportsImages != true {
+        if preparedPrompt.containsImages, currentModel?.supportsImages != true {
             LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: 0)
             sendResponse(
                 connection: connection,
@@ -313,7 +238,7 @@ final class APIServer {
         }
 
         // Context window check: estimate token count and reject if over limit
-        let estimatedPromptTokens = (instructions.count + chatMessages.reduce(0) { $0 + $1.content.count }) * 10 / 35
+        let estimatedPromptTokens = preparedPrompt.estimatedPromptTokens
         if contextLength > 0 {
             let needed = estimatedPromptTokens + maxTokens
             if needed > contextLength {
@@ -337,18 +262,19 @@ final class APIServer {
         )
 
         // Feed all messages except the last as history, then send the last as the prompt
+        let chatMessages = preparedPrompt.chatMessages
         let allButLast = Array(chatMessages.dropLast())
         let lastMessage = chatMessages.last ?? Chat.Message(role: .user, content: "")
 
-        let historySignatures = Array(messageSignatures.dropLast())
+        let historySignatures = Array(preparedPrompt.messageSignatures.dropLast())
         let currentModelId = modelManager.currentModel?.id ?? modelName
         let lease = ConversationSessionCache.shared.checkoutSession(
             modelId: currentModelId,
-            instructions: instructions,
+            instructions: preparedPrompt.instructions,
             historySignatures: historySignatures,
             requestMessageCount: chatMessages.count,
             estimatedPromptTokens: estimatedPromptTokens,
-            estimatedBytes: estimatedBytes
+            estimatedBytes: preparedPrompt.estimatedBytes
         )
 
         let session: ChatSession
@@ -365,24 +291,21 @@ final class APIServer {
             // Use `instructions:` for system/tool prompt (matches internal chat pattern).
             // Only conversation turns go in `history:` — this avoids replaying the
             // large tool prompt as history on every new session.
-            let instr = instructions.isEmpty ? nil : instructions
-            let thinkingContext: [String: any Sendable]? = Preferences.enableThinking
-                ? nil
-                : ["enable_thinking": false]
+            let instr = preparedPrompt.instructions.isEmpty ? nil : preparedPrompt.instructions
             if !allButLast.isEmpty {
                 session = ChatSession(
                     container,
                     instructions: instr,
                     history: allButLast,
                     generateParameters: generateParams,
-                    additionalContext: thinkingContext
+                    additionalContext: preparedPrompt.additionalContext
                 )
             } else {
                 session = ChatSession(
                     container,
                     instructions: instr,
                     generateParameters: generateParams,
-                    additionalContext: thinkingContext
+                    additionalContext: preparedPrompt.additionalContext
                 )
             }
             ConversationSessionCache.shared.markPrefilling(entryId: lease.entryId)
@@ -423,7 +346,7 @@ final class APIServer {
         }
 
         if result.succeeded {
-            var cachedSignatures = messageSignatures
+            var cachedSignatures = preparedPrompt.messageSignatures
             if let assistantHistoryText = result.assistantHistoryText {
                 cachedSignatures.append(
                     Self.messageSignature(role: .assistant, content: assistantHistoryText, imageURLs: [])
@@ -435,7 +358,7 @@ final class APIServer {
                 requestMessageSignatures: cachedSignatures,
                 requestMessageCount: cachedSignatures.count,
                 estimatedPromptTokens: estimatedPromptTokens,
-                estimatedBytes: estimatedBytes,
+                estimatedBytes: preparedPrompt.estimatedBytes,
                 promptTokens: result.promptTokens,
                 completionTokens: result.completionTokens
             )
