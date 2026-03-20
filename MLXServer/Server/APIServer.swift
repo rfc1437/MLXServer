@@ -7,6 +7,16 @@ import Network
 @Observable
 @MainActor
 final class APIServer {
+    struct DebugLookupEvent: Sendable {
+        let requestId: String
+        let modelId: String
+        let promptTokenCount: Int
+        let isHit: Bool
+        let matchedTokenCount: Int
+    }
+
+    nonisolated(unsafe) static var debugLookupEventHandler: (@Sendable (DebugLookupEvent) -> Void)?
+
     var isRunning = false
     var port: Int = 1234
     var requestCount: Int = 0
@@ -282,6 +292,16 @@ final class APIServer {
         let cacheKey = preparedInference.hasImages ? nil : preparedInference.tokens
         let lease = cacheKey.map { TokenPrefixCache.shared.lookup(cacheKey: $0, modelId: currentModelId) }
             ?? TokenPrefixCache.CacheLease(entryId: UUID(), kvCache: nil, matchedTokenCount: 0, isHit: false)
+
+        Self.debugLookupEventHandler?(
+            DebugLookupEvent(
+                requestId: requestId,
+                modelId: currentModelId,
+                promptTokenCount: preparedInference.tokens.count,
+                isHit: lease.isHit,
+                matchedTokenCount: lease.matchedTokenCount
+            )
+        )
 
         LiveCounters.shared.recordPrefillReuse(
             requestId: requestId,
@@ -595,9 +615,7 @@ final class APIServer {
         cacheKey: [Int],
         modelId: String
     ) {
-        guard trimGeneratedTokens(cache, promptTokenCount: promptTokenCount) else {
-            return
-        }
+        _ = trimGeneratedTokens(cache, promptTokenCount: promptTokenCount)
         TokenPrefixCache.shared.store(
             entryId: entryId,
             kvCache: cache,

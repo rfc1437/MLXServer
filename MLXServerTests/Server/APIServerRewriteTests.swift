@@ -3,6 +3,20 @@ import XCTest
 @testable import MLX_Server
 
 final class APIServerRewriteTests: XCTestCase {
+    func testHealthAndModelsEndpointsReturnExpectedPayloads() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let health = try await sendRawRequest(path: "/health", port: harness.port)
+        XCTAssertEqual(health.statusCode, 200)
+        XCTAssertEqual(health.body, #"{"status":"ok"}"#)
+
+        let models = try await sendModelsRequest(port: harness.port)
+        XCTAssertFalse(models.data.isEmpty)
+        XCTAssertTrue(models.data.contains { $0.id == ModelConfig.default.repoId })
+        XCTAssertTrue(models.data.allSatisfy { $0.context_window != nil })
+    }
+
     func testNonStreamingChatCompletionUsesStatelessServerPathAndCachesPrompt() async throws {
         let harness = try await makeHarness()
         defer { harness.stop() }
@@ -49,6 +63,306 @@ final class APIServerRewriteTests: XCTestCase {
         XCTAssertGreaterThan(secondSnapshot.totalHits, firstSnapshot.totalHits)
         XCTAssertGreaterThan(secondLiveSnapshot.totalCacheReusePromptTokens, firstLiveSnapshot.totalCacheReusePromptTokens)
         XCTAssertGreaterThan(secondLiveSnapshot.cacheMatchDepth, 0)
+    }
+
+    func testSecondIdenticalRequestIsFullCacheHitWithZeroRebuiltPromptTokens() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let request = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "user", content: .text("Answer with one word: ocean."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        _ = try await sendChatCompletion(request, port: harness.port)
+        _ = try await sendChatCompletion(request, port: harness.port)
+
+        let live = LiveCounters.shared.snapshot()
+        XCTAssertGreaterThan(live.currentCacheMatchedPromptTokens, 0)
+        XCTAssertEqual(live.currentCacheMatchedPromptTokens, live.promptTokens)
+        XCTAssertEqual(live.currentCacheRebuiltPromptTokens, 0)
+    }
+
+    func testSingleTurnContinuationProducesPartialCacheHit() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let firstRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "user", content: .text("Answer in one word: sun."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: true,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        let firstStream = try await sendStreamingChatCompletion(firstRequest, port: harness.port)
+        XCTAssertFalse(firstStream.content.isEmpty)
+
+        let secondRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "user", content: .text("Answer in one word: sun."), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "assistant", content: .text(firstStream.content), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Answer in one word: moon."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        _ = try await sendChatCompletion(secondRequest, port: harness.port)
+
+        let live = LiveCounters.shared.snapshot()
+        XCTAssertGreaterThan(live.currentCacheMatchedPromptTokens, 0)
+        XCTAssertGreaterThan(live.currentCacheRebuiltPromptTokens, 0)
+    }
+
+    func testSameSystemPromptDifferentUserMessageReusesSystemPrefix() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let lookups = LookupEventCollector()
+        APIServer.debugLookupEventHandler = { event in
+            Task {
+                await lookups.record(event)
+            }
+        }
+        defer {
+            APIServer.debugLookupEventHandler = nil
+        }
+
+        let firstRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "system", content: .text("You are terse and literal."), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Respond with one word for cat."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        let secondRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "system", content: .text("You are terse and literal."), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Respond with one word for dog."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        _ = try await sendChatCompletion(firstRequest, port: harness.port)
+        _ = try await sendChatCompletion(secondRequest, port: harness.port)
+
+        try await waitUntil(timeoutSeconds: 5) {
+            let events = await lookups.events()
+            return events.count >= 2
+        }
+
+        let events = await lookups.events()
+        let secondLookup = try XCTUnwrap(events.last)
+        XCTAssertEqual(secondLookup.modelId, "gemma")
+        XCTAssertGreaterThan(secondLookup.promptTokenCount, 0)
+        XCTAssertTrue(secondLookup.isHit)
+        XCTAssertGreaterThan(secondLookup.matchedTokenCount, 0)
+        XCTAssertLessThan(secondLookup.matchedTokenCount, secondLookup.promptTokenCount)
+    }
+
+    func testServerStoredCacheIsDirectlyReusableForSameSystemDifferentUserPrompt() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let firstRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "system", content: .text("You are terse and literal."), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Respond with one word for cat."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        _ = try await sendChatCompletion(firstRequest, port: harness.port)
+
+        let secondRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "system", content: .text("You are terse and literal."), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Respond with one word for dog."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        let modelContainer = await MainActor.run { harness.modelManager.modelContainer }
+        let container = try XCTUnwrap(modelContainer)
+        let engine = InferenceEngine(container: container)
+        let preparedPrompt = PromptBuilder.build(
+            from: secondRequest,
+            modelId: ModelConfig.default.repoId,
+            thinkingEnabled: Preferences.enableThinking
+        )
+        let preparedInference = try await engine.prepare(preparedPrompt.userInput)
+
+        let lease = TokenPrefixCache.shared.lookup(cacheKey: preparedInference.tokens, modelId: "gemma")
+
+        XCTAssertTrue(lease.isHit)
+        XCTAssertGreaterThan(lease.matchedTokenCount, 0)
+    }
+
+    func testDifferentSystemPromptDoesNotProduceFalseCacheHit() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        let firstRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "system", content: .text("System Alpha Unique Tokens"), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Answer in one word: tree."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        let secondRequest = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "system", content: .text("Completely Different Beta Markers"), name: nil, tool_calls: nil, tool_call_id: nil),
+                APIChatMessage(role: "user", content: .text("Answer in one word: tree."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        _ = try await sendChatCompletion(firstRequest, port: harness.port)
+        let before = TokenPrefixCache.shared.snapshot()
+        _ = try await sendChatCompletion(secondRequest, port: harness.port)
+
+        let after = TokenPrefixCache.shared.snapshot()
+        let live = LiveCounters.shared.snapshot()
+        XCTAssertEqual(after.totalHits, before.totalHits)
+        XCTAssertEqual(live.currentCacheMatchedPromptTokens, 0)
+    }
+
+    func testIdleUnloadReloadInvalidatesCacheAndServesFreshRequest() async throws {
+        let harness = try await makeHarness()
+        defer { harness.stop() }
+
+        Preferences.lastModelId = "gemma"
+        let request = APIChatCompletionRequest(
+            model: nil,
+            messages: [
+                APIChatMessage(role: "user", content: .text("Answer in one word: cloud."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        _ = try await sendChatCompletion(request, port: harness.port)
+        try await waitUntil(timeoutSeconds: 5) {
+            TokenPrefixCache.shared.snapshot().totalEntries > 0
+        }
+
+        await MainActor.run {
+            harness.modelManager.unloadModel()
+        }
+        let wasReadyAfterUnload = await MainActor.run { harness.modelManager.isReady }
+        XCTAssertFalse(wasReadyAfterUnload)
+
+        let before = TokenPrefixCache.shared.snapshot()
+        let response = try await sendChatCompletion(request, port: harness.port)
+        XCTAssertEqual(response.choices.count, 1)
+        let isReadyAfterReload = await MainActor.run { harness.modelManager.isReady }
+        XCTAssertTrue(isReadyAfterReload)
+
+        let after = TokenPrefixCache.shared.snapshot()
+        let live = LiveCounters.shared.snapshot()
+        XCTAssertEqual(after.totalHits, before.totalHits)
+        XCTAssertEqual(live.currentCacheMatchedPromptTokens, 0)
     }
 
     func testStreamingChatCompletionReusesCacheAcrossThreeProgressivelyLongerTurns() async throws {
@@ -568,6 +882,19 @@ final class APIServerRewriteTests: XCTestCase {
         return try JSONDecoder().decode(APIChatCompletionResponse.self, from: data)
     }
 
+    private func sendModelsRequest(port: UInt16) async throws -> APIModelListResponse {
+        let response = try await sendRawRequest(path: "/v1/models", port: port)
+        XCTAssertEqual(response.statusCode, 200)
+        return try JSONDecoder().decode(APIModelListResponse.self, from: response.bodyData)
+    }
+
+    private func sendRawRequest(path: String, port: UInt16) async throws -> (statusCode: Int, body: String, bodyData: Data) {
+        let url = URL(string: "http://127.0.0.1:\(port)\(path)")!
+        let (data, response) = try await URLSession.shared.data(from: url)
+        let httpResponse = try XCTUnwrap(response as? HTTPURLResponse)
+        return (httpResponse.statusCode, String(data: data, encoding: .utf8) ?? "", data)
+    }
+
     private func sendStreamingChatCompletion(_ request: APIChatCompletionRequest, port: UInt16) async throws -> StreamingResult {
         let detailed = try await sendStreamingChatCompletionDetailed(request, port: port)
         return StreamingResult(
@@ -692,6 +1019,18 @@ private actor StreamCancellationObserver {
 
     var hasSeenFirstContent: Bool {
         sawFirstContent
+    }
+}
+
+private actor LookupEventCollector {
+    private var recorded: [APIServer.DebugLookupEvent] = []
+
+    func record(_ event: APIServer.DebugLookupEvent) {
+        recorded.append(event)
+    }
+
+    func events() -> [APIServer.DebugLookupEvent] {
+        recorded
     }
 }
 

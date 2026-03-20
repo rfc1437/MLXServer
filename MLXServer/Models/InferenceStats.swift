@@ -428,6 +428,9 @@ final class InferenceStats {
     var totalCacheMisses: Int = 0
     var totalCacheEvictions: Int = 0
     var cacheHitRatePercent: Double = 0
+    var totalPrefixHits: Int = 0
+    var totalSupersequenceHits: Int = 0
+    var totalLCPHits: Int = 0
     var totalPreparingDuration: TimeInterval = 0
     var totalSessionBuildDuration: TimeInterval = 0
     var totalPrefillDuration: TimeInterval = 0
@@ -532,6 +535,9 @@ final class InferenceStats {
         totalCacheMisses = cache.totalMisses
         totalCacheEvictions = cache.totalEvictions
         cacheHitRatePercent = cache.hitRate
+        totalPrefixHits = cache.prefixHits
+        totalSupersequenceHits = cache.supersequenceHits
+        totalLCPHits = cache.lcpHits
         cacheEntryCount = cache.totalEntries
         cacheEstimatedBytes = cache.estimatedBytes
         cacheEstimatedTokens = cache.totalCachedTokens
@@ -658,6 +664,9 @@ final class InferenceStats {
         totalCacheMisses = 0
         totalCacheEvictions = 0
         cacheHitRatePercent = 0
+        totalPrefixHits = 0
+        totalSupersequenceHits = 0
+        totalLCPHits = 0
         cacheEntryCount = 0
         cacheEstimatedBytes = 0
         cacheEstimatedTokens = 0

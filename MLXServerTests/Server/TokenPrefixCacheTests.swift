@@ -127,4 +127,86 @@ final class TokenPrefixCacheTests: XCTestCase {
         XCTAssertEqual(snapshot.totalCachedTokens, 0)
         XCTAssertEqual(snapshot.estimatedBytes, 0)
     }
+
+    func testSupersequenceLookupReusesLongerEntryForShorterQuery() {
+        let cache = TokenPrefixCache(
+            memoryBudgetBytes: 10_000,
+            estimateBytesProvider: { _ in 1_024 }
+        )
+
+        let entryId = UUID()
+        cache.store(entryId: entryId, kvCache: [], cacheKey: [1, 2, 3, 4], modelId: "model")
+
+        let lease = cache.lookup(cacheKey: [1, 2, 3], modelId: "model")
+        let snapshot = cache.snapshot()
+
+        XCTAssertTrue(lease.isHit)
+        XCTAssertEqual(lease.entryId, entryId)
+        XCTAssertEqual(lease.matchedTokenCount, 3)
+        XCTAssertEqual(snapshot.totalHits, 1)
+        XCTAssertEqual(snapshot.supersequenceHits, 1)
+        XCTAssertEqual(snapshot.prefixHits, 0)
+        XCTAssertEqual(snapshot.lcpHits, 0)
+    }
+
+    func testLCPLookupReusesSharedPrefixAcrossDivergentSuffixes() {
+        let cache = TokenPrefixCache(
+            memoryBudgetBytes: 10_000,
+            estimateBytesProvider: { _ in 1_024 }
+        )
+
+        let entryId = UUID()
+        cache.store(entryId: entryId, kvCache: [], cacheKey: [10, 20, 90], modelId: "model")
+
+        let lease = cache.lookup(cacheKey: [10, 20, 30], modelId: "model")
+        let snapshot = cache.snapshot()
+
+        XCTAssertTrue(lease.isHit)
+        XCTAssertEqual(lease.entryId, entryId)
+        XCTAssertEqual(lease.matchedTokenCount, 2)
+        XCTAssertEqual(snapshot.totalHits, 1)
+        XCTAssertEqual(snapshot.lcpHits, 1)
+        XCTAssertEqual(snapshot.prefixHits, 0)
+        XCTAssertEqual(snapshot.supersequenceHits, 0)
+    }
+
+    func testLCPLookupRejectsShallowSharedPrefix() {
+        let cache = TokenPrefixCache(
+            memoryBudgetBytes: 10_000,
+            estimateBytesProvider: { _ in 1_024 }
+        )
+
+        cache.store(entryId: UUID(), kvCache: [], cacheKey: [10, 20, 30, 40], modelId: "model")
+
+        let lease = cache.lookup(cacheKey: [10, 99, 98, 97], modelId: "model")
+        let snapshot = cache.snapshot()
+
+        XCTAssertFalse(lease.isHit)
+        XCTAssertEqual(lease.matchedTokenCount, 0)
+        XCTAssertEqual(snapshot.totalHits, 0)
+        XCTAssertEqual(snapshot.totalMisses, 1)
+        XCTAssertEqual(snapshot.lcpHits, 0)
+    }
+
+    func testLookupPrefersPrefixMatchOverSupersequenceAndLCP() {
+        let cache = TokenPrefixCache(
+            memoryBudgetBytes: 10_000,
+            estimateBytesProvider: { _ in 1_024 }
+        )
+
+        let prefixId = UUID()
+        cache.store(entryId: prefixId, kvCache: [], cacheKey: [7, 8], modelId: "model")
+        cache.store(entryId: UUID(), kvCache: [], cacheKey: [7, 8, 9, 10], modelId: "model")
+        cache.store(entryId: UUID(), kvCache: [], cacheKey: [7, 8, 11], modelId: "model")
+
+        let lease = cache.lookup(cacheKey: [7, 8, 12], modelId: "model")
+        let snapshot = cache.snapshot()
+
+        XCTAssertTrue(lease.isHit)
+        XCTAssertEqual(lease.entryId, prefixId)
+        XCTAssertEqual(lease.matchedTokenCount, 2)
+        XCTAssertEqual(snapshot.prefixHits, 1)
+        XCTAssertEqual(snapshot.supersequenceHits, 0)
+        XCTAssertEqual(snapshot.lcpHits, 0)
+    }
 }

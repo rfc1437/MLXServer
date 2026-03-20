@@ -33,6 +33,9 @@ final class TokenPrefixCache: @unchecked Sendable {
         let totalMisses: Int
         let totalEvictions: Int
         let hitRate: Double
+        let prefixHits: Int
+        let supersequenceHits: Int
+        let lcpHits: Int
         let entries: [EntrySummary]
     }
 
@@ -57,6 +60,9 @@ final class TokenPrefixCache: @unchecked Sendable {
         var totalHits: Int = 0
         var totalMisses: Int = 0
         var totalEvictions: Int = 0
+        var totalPrefixHits: Int = 0
+        var totalSupersequenceHits: Int = 0
+        var totalLCPHits: Int = 0
     }
 
     private let lock = OSAllocatedUnfairLock()
@@ -92,13 +98,22 @@ final class TokenPrefixCache: @unchecked Sendable {
         lock.lock()
         let now = nowProvider()
         pruneExpiredLocked(now: now)
+        let queryRealTokenCount = cacheKey.reduce(into: 0) { partialResult, token in
+            if token >= 0 {
+                partialResult += 1
+            }
+        }
 
         var node = root
         var bestMatch: (entryId: UUID, realTokenCount: Int)?
         var realTokenCount = 0
+        var walkedFullKey = true
 
         for key in cacheKey {
-            guard let child = node.children[key] else { break }
+            guard let child = node.children[key] else {
+                walkedFullKey = false
+                break
+            }
             node = child
             if key >= 0 { realTokenCount += 1 }
             if let entryId = node.entryId,
@@ -108,27 +123,50 @@ final class TokenPrefixCache: @unchecked Sendable {
             }
         }
 
-        guard let match = bestMatch,
-              var entry = entries[match.entryId]
-        else {
-            stats.totalMisses += 1
+        if let match = bestMatch,
+           var entry = entries[match.entryId] {
+            entry.lastAccessAt = now
+            entry.hitCount += 1
+            entries[match.entryId] = entry
+            removeEntryLocked(entry)
+            stats.totalHits += 1
+            stats.totalPrefixHits += 1
             lock.unlock()
-            return CacheLease(entryId: UUID(), kvCache: nil, matchedTokenCount: 0, isHit: false)
+
+            return CacheLease(
+                entryId: match.entryId,
+                kvCache: entry.kvCache,
+                matchedTokenCount: match.realTokenCount,
+                isHit: true
+            )
         }
 
-        entry.lastAccessAt = now
-        entry.hitCount += 1
-        entries[match.entryId] = entry
-        removeEntryLocked(entry)
-        stats.totalHits += 1
-        lock.unlock()
+        if walkedFullKey,
+           let superLease = findSupersequenceMatchLocked(
+               below: node,
+               queryRealTokenCount: realTokenCount,
+               modelId: modelId,
+               now: now
+           ) {
+            lock.unlock()
+            return superLease
+        }
 
-        return CacheLease(
-            entryId: match.entryId,
-            kvCache: entry.kvCache,
-            matchedTokenCount: match.realTokenCount,
-            isHit: true
-        )
+        if realTokenCount > 0,
+           let lcpLease = findLCPMatchLocked(
+               below: node,
+               sharedRealTokenCount: realTokenCount,
+               queryRealTokenCount: queryRealTokenCount,
+               modelId: modelId,
+               now: now
+           ) {
+            lock.unlock()
+            return lcpLease
+        }
+
+        stats.totalMisses += 1
+        lock.unlock()
+        return CacheLease(entryId: UUID(), kvCache: nil, matchedTokenCount: 0, isHit: false)
     }
 
     func store(
@@ -216,6 +254,9 @@ final class TokenPrefixCache: @unchecked Sendable {
             totalMisses: misses,
             totalEvictions: stats.totalEvictions,
             hitRate: totalOps > 0 ? (Double(hits) / Double(totalOps)) * 100 : 0,
+            prefixHits: stats.totalPrefixHits,
+            supersequenceHits: stats.totalSupersequenceHits,
+            lcpHits: stats.totalLCPHits,
             entries: orderedEntries.map {
                 EntrySummary(
                     id: $0.id,
@@ -295,6 +336,125 @@ final class TokenPrefixCache: @unchecked Sendable {
 
     private func countNodes(_ node: TrieNode) -> Int {
         1 + node.children.values.reduce(0) { $0 + countNodes($1) }
+    }
+
+    private func findSupersequenceMatchLocked(
+        below node: TrieNode,
+        queryRealTokenCount: Int,
+        modelId: String,
+        now: Date
+    ) -> CacheLease? {
+        var queue: [TrieNode] = [node]
+        var bestEntry: CacheEntry?
+
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            if let entryId = current.entryId,
+               let entry = entries[entryId],
+               entry.modelId == modelId,
+               entry.tokenCount > queryRealTokenCount,
+               entry.kvCache.allSatisfy({ $0.isTrimmable }) {
+                if bestEntry == nil || entry.tokenCount < bestEntry!.tokenCount {
+                    bestEntry = entry
+                }
+            }
+
+            for child in current.children.values {
+                queue.append(child)
+            }
+        }
+
+        guard let entry = bestEntry,
+              let trimmedCache = Self.trimCacheByOffset(entry.kvCache, trimBy: entry.tokenCount - queryRealTokenCount)
+        else {
+            return nil
+        }
+
+        var updatedEntry = entry
+        updatedEntry.lastAccessAt = now
+        updatedEntry.hitCount += 1
+        entries[entry.id] = updatedEntry
+        removeEntryLocked(updatedEntry)
+        stats.totalHits += 1
+        stats.totalSupersequenceHits += 1
+
+        return CacheLease(
+            entryId: updatedEntry.id,
+            kvCache: trimmedCache,
+            matchedTokenCount: queryRealTokenCount,
+            isHit: true
+        )
+    }
+
+    private func findLCPMatchLocked(
+        below node: TrieNode,
+        sharedRealTokenCount: Int,
+        queryRealTokenCount: Int,
+        modelId: String,
+        now: Date
+    ) -> CacheLease? {
+        guard sharedRealTokenCount >= Self.minimumLCPMatchTokens(for: queryRealTokenCount) else {
+            return nil
+        }
+
+        var queue = Array(node.children.values)
+        var bestEntry: CacheEntry?
+
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            if let entryId = current.entryId,
+               let entry = entries[entryId],
+               entry.modelId == modelId,
+               entry.tokenCount > sharedRealTokenCount,
+               entry.kvCache.allSatisfy({ $0.isTrimmable }) {
+                if bestEntry == nil || entry.tokenCount < bestEntry!.tokenCount {
+                    bestEntry = entry
+                }
+            }
+
+            for child in current.children.values {
+                queue.append(child)
+            }
+        }
+
+        guard let entry = bestEntry,
+              let trimmedCache = Self.trimCacheByOffset(entry.kvCache, trimBy: entry.tokenCount - sharedRealTokenCount)
+        else {
+            return nil
+        }
+
+        var updatedEntry = entry
+        updatedEntry.lastAccessAt = now
+        updatedEntry.hitCount += 1
+        entries[entry.id] = updatedEntry
+        removeEntryLocked(updatedEntry)
+        stats.totalHits += 1
+        stats.totalLCPHits += 1
+
+        return CacheLease(
+            entryId: updatedEntry.id,
+            kvCache: trimmedCache,
+            matchedTokenCount: sharedRealTokenCount,
+            isHit: true
+        )
+    }
+
+    private static func trimCacheByOffset(_ cache: [KVCache], trimBy: Int) -> [KVCache]? {
+        guard trimBy >= 0 else { return nil }
+        guard trimBy > 0 else { return cache }
+
+        for layer in cache {
+            guard layer.isTrimmable else { return nil }
+            let trimmed = layer.trim(trimBy)
+            guard trimmed == trimBy else { return nil }
+        }
+
+        return cache
+    }
+
+    private static func minimumLCPMatchTokens(for queryRealTokenCount: Int) -> Int {
+        guard queryRealTokenCount > 0 else { return .max }
+        return max(2, (queryRealTokenCount + 1) / 2)
     }
 
     private static func computeMemoryBudget() -> Int {

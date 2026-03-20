@@ -2609,13 +2609,13 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 ### Cache Correctness
 
 - [x] Cold start: no cache entries → fresh generation works
-- [ ] Second identical request → full cache hit, zero prefill tokens
-- [ ] Conversation continuation (add 1 message) → partial cache hit
+- [x] Second identical request → full cache hit, zero prefill tokens
+- [x] Conversation continuation (add 1 message) → partial cache hit
 - [x] Conversation continuation (add 2+ messages, e.g. tool-use flow) → partial cache hit (not a miss!)
-- [ ] Same system prompt, different user message → system prompt prefix cached and reused
-- [ ] Different system prompt → no false cache hit
+- [x] Same system prompt, different user message → system prompt prefix cached and reused
+- [x] Different system prompt → no false cache hit
 - [ ] Model swap → cache invalidated, fresh generation works
-- [ ] Idle unload + reload → cache invalidated, fresh generation works
+- [x] Idle unload + reload → cache invalidated, fresh generation works
 
 ### Memory Management
 
@@ -2623,7 +2623,7 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 - [x] Entries evicted under memory pressure (oldest first)
 - [x] Expired entries pruned after 30 min idle
 - [x] Trie nodes cleaned up when entries are evicted (no memory leak)
-- [ ] `snapshot()` reports accurate memory usage and hit rates
+- [x] `snapshot()` reports accurate memory usage and hit rates
 
 ### Disconnect Handling
 
@@ -2666,16 +2666,16 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Advanced Cache Matching (Section 12)
 
-- [ ] Supersequence: cached `[A,B,C,D,E]`, query `[A,B,C]` → cache hit, KV trimmed to 3 tokens
+- [x] Supersequence: cached `[A,B,C,D,E]`, query `[A,B,C]` → cache hit, KV trimmed to 3 tokens
 - [ ] Supersequence: cached entry has non-trimmable layers (hybrid model) → graceful skip, falls through to miss
 - [ ] Supersequence: multiple candidates in subtree → shallowest (least excess) is chosen
-- [ ] LCP: cached `[SYS,A,B,X,Y]`, query `[SYS,A,B,D,E]` → cache hit covering `[SYS,A,B]`, remaining `[D,E]`
+- [x] LCP: cached `[SYS,A,B,X,Y]`, query `[SYS,A,B,D,E]` → cache hit covering `[SYS,A,B]`, remaining `[D,E]`
 - [ ] LCP: divergence at depth 0 (no shared prefix at all) → no LCP match, clean miss
 - [ ] LCP: multiple sibling entries at divergence → best (shallowest) is chosen
 - [ ] LCP agentic pattern: same system prompt (500 tokens) + different user message → system prompt cached and reused
-- [ ] Match priority: prefix match takes priority over supersequence and LCP
+- [x] Match priority: prefix match takes priority over supersequence and LCP
 - [ ] Match priority: supersequence takes priority over LCP
-- [ ] Stats: prefix, supersequence, and LCP hits counted separately in snapshot
+- [x] Stats: prefix, supersequence, and LCP hits counted separately in snapshot
 - [ ] Trim correctness: KVCache.trim() called with correct excess count, offset reduced accordingly
 - [ ] Trim + generate: trimmed cache produces valid generation (no garbled output from stale K/V)
 

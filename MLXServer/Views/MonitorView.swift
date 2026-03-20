@@ -39,7 +39,7 @@ struct MonitorView: View {
                     metricCard(
                         title: "Cache Hit Rate",
                         value: String(format: "%.0f%%", stats.cacheHitRatePercent),
-                        detail: "\(stats.totalCacheHits) hits / \(stats.totalCacheMisses) misses",
+                        detail: "\(stats.totalCacheHits) hits / \(stats.totalCacheMisses) misses • P:\(stats.totalPrefixHits) S:\(stats.totalSupersequenceHits) L:\(stats.totalLCPHits)",
                         color: .blue
                     )
                     metricCard(
