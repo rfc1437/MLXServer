@@ -998,6 +998,74 @@ final class APIServerRewriteTests: XCTestCase {
         XCTAssertLessThan(elapsed, 0.2)
     }
 
+    func testServerShutdownCancelsInFlightStreamAndDrainsActiveRequests() async throws {
+        let harness = try await makeHarness()
+
+        let request = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "user", content: .text("Count from one to fifty with commas, using many tokens."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 128,
+            stream: true,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        let url = URL(string: "http://127.0.0.1:\(harness.port)/v1/chat/completions")!
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONEncoder().encode(request)
+
+        let observer = StreamCancellationObserver()
+        let session = URLSession(configuration: .ephemeral)
+        let task = Task {
+            let (bytes, response) = try await session.bytes(for: urlRequest)
+            let httpResponse = try XCTUnwrap(response as? HTTPURLResponse)
+            XCTAssertEqual(httpResponse.statusCode, 200)
+
+            for try await line in bytes.lines {
+                guard line.hasPrefix("data: ") else { continue }
+                let payload = String(line.dropFirst(6))
+                if payload == "[DONE]" {
+                    break
+                }
+                guard let data = payload.data(using: .utf8) else { continue }
+                let chunk = try JSONDecoder().decode(APIChatCompletionChunk.self, from: data)
+                if let deltaContent = chunk.choices.first?.delta.content, !deltaContent.isEmpty {
+                    await observer.markFirstContentSeen()
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                }
+            }
+        }
+
+        try await waitUntil(timeoutSeconds: 10) {
+            await observer.hasSeenFirstContent
+        }
+
+        await harness.server.shutdown(timeoutSeconds: 2.0)
+
+        let liveSnapshot = LiveCounters.shared.snapshot()
+        XCTAssertEqual(liveSnapshot.activeRequests, 0)
+        let isRunning = await MainActor.run { harness.server.isRunning }
+        XCTAssertFalse(isRunning)
+
+        session.invalidateAndCancel()
+        task.cancel()
+        _ = try? await task.value
+        await MainActor.run {
+            harness.modelManager.unloadModel()
+        }
+        TokenPrefixCache.shared.reset()
+    }
+
     func testRepeatedStreamingDisconnectsDoNotBreakSubsequentGeneration() async throws {
         let harness = try await makeHarness()
         defer { harness.stop() }

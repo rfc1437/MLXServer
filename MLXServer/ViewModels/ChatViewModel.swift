@@ -181,15 +181,18 @@ final class ChatViewModel {
     }
 
     func stop() {
-        generationTask?.cancel()
-        generationTask = nil
-        isGenerating = false
+        _ = cancelActiveGeneration()
+    }
 
-        if let last = conversation.messages.indices.last,
-           conversation.messages[last].isStreaming {
-            conversation.finalizeMessage(at: last)
-            markDirtyIfNeeded()
-        }
+    func prepareForTermination() async {
+        autosaveToSandbox()
+
+        let activeGeneration = cancelActiveGeneration()
+        await apiServer.shutdown()
+        await activeGeneration?.value
+
+        resetSession()
+        modelManager.unloadModel()
     }
 
     func attachImage(_ image: NSImage) {
@@ -563,5 +566,21 @@ final class ChatViewModel {
 
     func stopAPIServer() {
         apiServer.stop()
+    }
+
+    @discardableResult
+    private func cancelActiveGeneration() -> Task<Void, Never>? {
+        let activeGeneration = generationTask
+        activeGeneration?.cancel()
+        generationTask = nil
+        isGenerating = false
+
+        if let last = conversation.messages.indices.last,
+           conversation.messages[last].isStreaming {
+            conversation.finalizeMessage(at: last)
+            markDirtyIfNeeded()
+        }
+
+        return activeGeneration
     }
 }

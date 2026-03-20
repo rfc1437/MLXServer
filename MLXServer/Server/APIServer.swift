@@ -15,6 +15,11 @@ final class APIServer {
         let matchedTokenCount: Int
     }
 
+    private struct ActiveRequest {
+        let connection: NWConnection
+        let cancellation: CancellationToken
+    }
+
     nonisolated(unsafe) static var debugLookupEventHandler: (@Sendable (DebugLookupEvent) -> Void)?
 
     var isRunning = false
@@ -24,11 +29,14 @@ final class APIServer {
 
     private var listener: NWListener?
     private var modelManager: ModelManager?
+    private var activeRequests: [String: ActiveRequest] = [:]
+    private var isShuttingDown = false
 
     func start(modelManager: ModelManager, port: Int = 1234) {
         guard !isRunning else { return }
         self.modelManager = modelManager
         self.port = port
+        self.isShuttingDown = false
 
         do {
             let params = NWParameters.tcp
@@ -70,11 +78,46 @@ final class APIServer {
     }
 
     func stop() {
+        beginShutdown()
+        TokenPrefixCache.shared.invalidateAll()
+        inferenceStats.stopSampling()
+    }
+
+    func shutdown(timeoutSeconds: TimeInterval = 2.0) async {
+        beginShutdown()
+
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while !activeRequests.isEmpty && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        TokenPrefixCache.shared.invalidateAll()
+        inferenceStats.stopSampling()
+    }
+
+    private func beginShutdown() {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
         listener?.cancel()
         listener = nil
         isRunning = false
-        TokenPrefixCache.shared.invalidateAll()
-        inferenceStats.stopSampling()
+
+        for activeRequest in activeRequests.values {
+            activeRequest.cancellation.cancel()
+            activeRequest.connection.cancel()
+        }
+    }
+
+    private func registerActiveRequest(
+        requestId: String,
+        connection: NWConnection,
+        cancellation: CancellationToken
+    ) {
+        activeRequests[requestId] = ActiveRequest(connection: connection, cancellation: cancellation)
+    }
+
+    private func unregisterActiveRequest(requestId: String) {
+        activeRequests.removeValue(forKey: requestId)
     }
 
     // MARK: - Connection handling
@@ -171,6 +214,11 @@ final class APIServer {
     // MARK: - POST /v1/chat/completions
 
     private func handleChatCompletions(connection: NWConnection, body: Data?) async {
+        guard !isShuttingDown else {
+            sendResponse(connection: connection, status: 503, body: #"{"error":"Server is shutting down"}"#)
+            return
+        }
+
         guard let body, let request = try? JSONDecoder().decode(APIChatCompletionRequest.self, from: body) else {
             sendResponse(connection: connection, status: 400, body: #"{"error":"Invalid request body"}"#)
             return
@@ -312,6 +360,11 @@ final class APIServer {
         LiveCounters.shared.requestPhaseChanged(requestId: requestId, phase: .prefilling)
 
         let cancellation = CancellationToken()
+        registerActiveRequest(requestId: requestId, connection: connection, cancellation: cancellation)
+        defer {
+            unregisterActiveRequest(requestId: requestId)
+        }
+
         let streamHandle: InferenceEngine.StreamHandle
         do {
             streamHandle = try await engine.stream(
@@ -352,7 +405,8 @@ final class APIServer {
             )
         }
 
-        if let cacheKey,
+          if let cacheKey,
+              !isShuttingDown,
            result.succeeded || result.cancelled {
             Self.storePromptCache(
                 streamHandle.workingCache,
