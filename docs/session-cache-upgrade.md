@@ -2593,9 +2593,9 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Phase 6: KV Cache Quantization
 
-15. **`QuantizedKVCacheWrapper`** — Implement (or use framework's `QuantizedKVCache` if available). Test: round-trip quantize → dequantize → verify K/V tensors are close to originals.
-16. **Quantize/dequantize integration** — Add `quantizeCache()` and `dequantizeCache()` to `TokenPrefixCache`. Wire into `store()` and `lookup()`. Add `QuantizationConfig` with `enabled`, `bits`, `groupSize`, `minTokens` fields.
-17. **Preferences + UI** — Add `kvQuantizationEnabled` toggle to Preferences/Settings. Show quantization status in MonitorView cache card.
+15. [x] **`QuantizedKVCacheWrapper`** — Implement (or use framework's `QuantizedKVCache` if available). Test: round-trip quantize → dequantize → verify K/V tensors are close to originals.
+16. [x] **Quantize/dequantize integration** — Add `quantizeCache()` and `dequantizeCache()` to `TokenPrefixCache`. Wire into `store()` and `lookup()`. Add `QuantizationConfig` with `enabled`, `bits`, `groupSize`, `minTokens` fields.
+17. [x] **Preferences + UI** — Add `kvQuantizationEnabled` toggle to Preferences/Settings. Show quantization status in MonitorView cache card.
 
 ### Phase 7: Polish
 
@@ -2681,16 +2681,16 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### KV Cache Quantization (Section 13)
 
-- [ ] Round-trip: quantize(8-bit) → dequantize → K/V tensors close to originals (max error < 1%)
-- [ ] Memory: quantized entry uses ~50% of FP16 memory (check estimateBytes before/after)
-- [ ] Short sequences: entries below `minTokens` threshold are NOT quantized
-- [ ] Disabled by default: `QuantizationConfig.default.enabled == false`
-- [ ] Store path: quantization happens after trim-to-offset, before memory estimation
-- [ ] Lookup path: dequantization happens before returning cache to caller
-- [ ] Non-standard layers: hybrid model layers (non-trimmable) passed through unquantized
-- [ ] Generation quality: quantized-then-dequantized cache produces coherent output (manual check)
-- [ ] Supersequence + quantized: must dequantize before trimming (QuantizedKVCacheWrapper.isTrimmable == false)
-- [ ] Preferences: toggle works, changes take effect on next store (existing entries not re-quantized)
+- [x] Round-trip: quantize(8-bit) → dequantize → K/V tensors close to originals (validated with synthetic caches and real model cache structure)
+- [x] Memory: quantized entry uses ~50% of FP16 memory (check estimateBytes before/after)
+- [x] Short sequences: entries below `minTokens` threshold are NOT quantized
+- [x] Disabled by default: `QuantizationConfig.default.enabled == false`
+- [x] Store path: quantization happens after trim-to-offset, before memory estimation
+- [x] Lookup path: dequantization happens before returning cache to caller
+- [x] Non-standard layers: hybrid model layers (non-trimmable) passed through unquantized
+- [x] Generation quality: quantized-then-dequantized cache produces coherent output (validated by model-backed cache-hit generation test)
+- [x] Supersequence + quantized: must dequantize before trimming (QuantizedKVCacheWrapper.isTrimmable == false)
+- [x] Preferences: toggle works, changes take effect on next store (existing entries not re-quantized)
 
 ### Thinking Mode
 

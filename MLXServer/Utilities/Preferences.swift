@@ -98,4 +98,30 @@ enum Preferences {
         }
         set { defaults.set(newValue, forKey: idleUnloadMinutesKey) }
     }
+
+    // MARK: - KV Cache Quantization
+
+    private static let kvQuantizationEnabledKey = "kvQuantizationEnabled"
+    private static let kvQuantizationBitsKey = "kvQuantizationBits"
+
+    /// Whether to quantize KV caches for compact storage (50% memory savings at 8-bit).
+    /// Default: false (disabled for maximum quality). Requires TokenPrefixCache Phase 6.
+    static var kvQuantizationEnabled: Bool {
+        get { defaults.object(forKey: kvQuantizationEnabledKey) == nil ? false : defaults.bool(forKey: kvQuantizationEnabledKey) }
+        set { defaults.set(newValue, forKey: kvQuantizationEnabledKey) }
+    }
+
+    /// Bit width for KV cache quantization. Standard: 8 (recommended). Range: 4-16.
+    /// Lower bits = more compression but potential quality loss. 8-bit is proven in production.
+    static var kvQuantizationBits: Int {
+        get {
+            let val = defaults.integer(forKey: kvQuantizationBitsKey)
+            return val > 0 ? val : 8
+        }
+        set {
+            // Clamp to valid range
+            let clamped = max(4, min(newValue, 16))
+            defaults.set(clamped, forKey: kvQuantizationBitsKey)
+        }
+    }
 }

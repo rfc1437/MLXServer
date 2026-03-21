@@ -1,5 +1,6 @@
 import Foundation
 import Metal
+import MLX
 import MLXLMCommon
 import os
 
@@ -36,6 +37,8 @@ final class TokenPrefixCache: @unchecked Sendable {
         let prefixHits: Int
         let supersequenceHits: Int
         let lcpHits: Int
+        let quantizationBytesSaved: Int  // Total bytes saved by quantization
+        let quantizationEnabled: Bool
         let entries: [EntrySummary]
     }
 
@@ -54,6 +57,7 @@ final class TokenPrefixCache: @unchecked Sendable {
         let createdAt: Date
         var lastAccessAt: Date
         var hitCount: Int
+        let isQuantized: Bool
     }
 
     private struct Stats {
@@ -63,6 +67,32 @@ final class TokenPrefixCache: @unchecked Sendable {
         var totalPrefixHits: Int = 0
         var totalSupersequenceHits: Int = 0
         var totalLCPHits: Int = 0
+        var totalQuantizationBytesSaved: Int = 0
+    }
+
+    struct QuantizationConfig: Sendable {
+        /// Whether to quantize KV caches for storage
+        let enabled: Bool
+        /// Bit width for quantization (8 is recommended for 50% savings with minimal quality loss)
+        let bits: Int
+        /// Group size for quantization. Matches mlx-swift-lm default.
+        let groupSize: Int
+        /// Minimum token count before quantization applies. Short sequences don't benefit.
+        let minTokens: Int
+
+        static let `default` = QuantizationConfig(
+            enabled: false,
+            bits: 8,
+            groupSize: 64,
+            minTokens: 256
+        )
+
+        static let aggressive = QuantizationConfig(
+            enabled: true,
+            bits: 8,
+            groupSize: 64,
+            minTokens: 256
+        )
     }
 
     private let lock = OSAllocatedUnfairLock()
@@ -74,24 +104,55 @@ final class TokenPrefixCache: @unchecked Sendable {
     private var entries: [UUID: CacheEntry] = [:]
     private var currentMemoryBytes: Int = 0
     private var stats = Stats()
+    private var quantizationConfig: QuantizationConfig
 
     private init() {
         self.maxMemoryBytes = Self.computeMemoryBudget()
         self.idleTTL = 30 * 60
         self.estimateBytesProvider = Self.estimateBytes
         self.nowProvider = Date.init
+        self.quantizationConfig = Self.preferencesQuantizationConfig()
     }
 
     init(
         memoryBudgetBytes: Int,
         idleTTL: TimeInterval = 30 * 60,
         estimateBytesProvider: @escaping ([KVCache]) -> Int = TokenPrefixCache.estimateBytes,
-        nowProvider: @escaping () -> Date = Date.init
+        nowProvider: @escaping () -> Date = Date.init,
+        quantizationConfig: QuantizationConfig = .default
     ) {
         self.maxMemoryBytes = memoryBudgetBytes
         self.idleTTL = idleTTL
         self.estimateBytesProvider = estimateBytesProvider
         self.nowProvider = nowProvider
+        self.quantizationConfig = quantizationConfig
+    }
+
+    /// Update quantization configuration.
+    func setQuantizationConfig(_ config: QuantizationConfig) {
+        lock.lock()
+        self.quantizationConfig = config
+        lock.unlock()
+    }
+
+    /// Get current quantization configuration.
+    func getQuantizationConfig() -> QuantizationConfig {
+        lock.lock()
+        defer { lock.unlock() }
+        return quantizationConfig
+    }
+
+    private static func preferencesQuantizationConfig() -> QuantizationConfig {
+        guard Preferences.kvQuantizationEnabled else {
+            return .default
+        }
+
+        return QuantizationConfig(
+            enabled: true,
+            bits: Preferences.kvQuantizationBits,
+            groupSize: 64,
+            minTokens: 256
+        )
     }
 
     func lookup(cacheKey: [Int], modelId: String) -> CacheLease {
@@ -123,19 +184,22 @@ final class TokenPrefixCache: @unchecked Sendable {
             }
         }
 
-          if let match = bestMatch,
-              var entry = entries[match.entryId] {
+        if let match = bestMatch,
+            var entry = entries[match.entryId] {
             entry.lastAccessAt = now
             entry.hitCount += 1
             entries[match.entryId] = entry
-                removeEntryLocked(entry, countAsEviction: false)
+            removeEntryLocked(entry, countAsEviction: false)
             stats.totalHits += 1
             stats.totalPrefixHits += 1
             lock.unlock()
 
+            // Dequantize if necessary before returning to caller
+            let cacheToReturn = Self.dequantizeCache(entry.kvCache)
+
             return CacheLease(
                 entryId: match.entryId,
-                kvCache: entry.kvCache,
+                kvCache: cacheToReturn,
                 matchedTokenCount: match.realTokenCount,
                 isHit: true
             )
@@ -180,7 +244,26 @@ final class TokenPrefixCache: @unchecked Sendable {
         let now = nowProvider()
         pruneExpiredLocked(now: now)
 
-        let estimatedBytes = estimateBytesProvider(kvCache)
+        let normalizedCache = Self.normalizeCacheForStorage(kvCache)
+        let bytesBeforeQuantization = estimateBytesProvider(normalizedCache)
+        let cacheToStore: [KVCache]
+
+        if quantizationConfig.enabled && cacheKey.filter({ $0 >= 0 }).count >= quantizationConfig.minTokens {
+            cacheToStore = Self.quantizeCache(normalizedCache, config: quantizationConfig)
+        } else {
+            cacheToStore = normalizedCache
+        }
+
+        let isQuantized = Self.cacheContainsQuantizedLayers(cacheToStore)
+
+        let estimatedBytes = estimateBytesProvider(cacheToStore)
+        let bytesSaved = bytesBeforeQuantization - estimatedBytes
+
+        // Update quantization stats if applicable
+        if isQuantized && bytesSaved > 0 {
+            stats.totalQuantizationBytesSaved += bytesSaved
+        }
+
         var node = root
         for key in cacheKey {
             if node.children[key] == nil {
@@ -198,13 +281,14 @@ final class TokenPrefixCache: @unchecked Sendable {
         entries[entryId] = CacheEntry(
             id: entryId,
             modelId: modelId,
-            kvCache: kvCache,
+            kvCache: cacheToStore,
             tokenCount: cacheKey.filter { $0 >= 0 }.count,
             cacheKey: cacheKey,
             estimatedBytes: estimatedBytes,
             createdAt: now,
             lastAccessAt: now,
-            hitCount: 0
+            hitCount: 0,
+            isQuantized: isQuantized
         )
         currentMemoryBytes += estimatedBytes
         enforceBudgetLocked()
@@ -258,6 +342,8 @@ final class TokenPrefixCache: @unchecked Sendable {
             prefixHits: stats.totalPrefixHits,
             supersequenceHits: stats.totalSupersequenceHits,
             lcpHits: stats.totalLCPHits,
+            quantizationBytesSaved: stats.totalQuantizationBytesSaved,
+            quantizationEnabled: quantizationConfig.enabled,
             entries: orderedEntries.map {
                 EntrySummary(
                     id: $0.id,
@@ -381,9 +467,12 @@ final class TokenPrefixCache: @unchecked Sendable {
         stats.totalHits += 1
         stats.totalSupersequenceHits += 1
 
+        // Dequantize if necessary before returning to caller
+        let cacheToReturn = Self.dequantizeCache(trimmedCache)
+
         return CacheLease(
             entryId: updatedEntry.id,
-            kvCache: trimmedCache,
+            kvCache: cacheToReturn,
             matchedTokenCount: queryRealTokenCount,
             isHit: true
         )
@@ -434,9 +523,12 @@ final class TokenPrefixCache: @unchecked Sendable {
         stats.totalHits += 1
         stats.totalLCPHits += 1
 
+        // Dequantize if necessary before returning to caller
+        let cacheToReturn = Self.dequantizeCache(trimmedCache)
+
         return CacheLease(
             entryId: updatedEntry.id,
-            kvCache: trimmedCache,
+            kvCache: cacheToReturn,
             matchedTokenCount: sharedRealTokenCount,
             isHit: true
         )
@@ -484,5 +576,78 @@ final class TokenPrefixCache: @unchecked Sendable {
             }
         }
         return max(total, 1024)
+    }
+
+    // MARK: - Quantization Support
+
+    /// Quantize a KV cache for compact storage (Phase 6 feature).
+    /// Converts FP16 K/V tensors to a lower-bit representation.
+    /// Returns the quantized cache or the original cache if quantization is skipped/unsupported.
+    private static func quantizeCache(
+        _ cache: [KVCache],
+        config: QuantizationConfig
+    ) -> [KVCache] {
+        guard config.enabled else { return cache }
+
+        return cache.map { layer in
+            if layer is QuantizedKVCache {
+                return layer
+            }
+
+            if let simpleLayer = layer as? KVCacheSimple {
+                let quantized = simpleLayer.toQuantized(
+                    groupSize: config.groupSize,
+                    bits: config.bits
+                )
+                MLX.eval(quantized.state)
+                return quantized
+            }
+
+            // Preserve non-standard cache types unchanged.
+            return layer
+        }
+    }
+
+    /// Dequantize a KV cache back to standard form before inference.
+    /// If the cache was not quantized, returns it unchanged.
+    private static func dequantizeCache(_ cache: [KVCache]) -> [KVCache] {
+        cache.map { layer in
+            if let quantizedLayer = layer as? QuantizedKVCache {
+                let unquantized = quantizedLayer.toUnquantized()
+                MLX.eval(unquantized.state)
+                return unquantized
+            }
+
+            return layer
+        }
+    }
+
+    private static func normalizeCacheForStorage(_ cache: [KVCache]) -> [KVCache] {
+        cache.map { layer in
+            if let quantizedLayer = layer as? QuantizedKVCache {
+                let compact = QuantizedKVCache(
+                    groupSize: quantizedLayer.groupSize,
+                    bits: quantizedLayer.bits,
+                    mode: quantizedLayer.mode
+                )
+                compact.state = quantizedLayer.state
+                compact.offset = quantizedLayer.offset
+                MLX.eval(compact.state)
+                return compact
+            }
+
+            if let simpleLayer = layer as? KVCacheSimple {
+                let compact = KVCacheSimple()
+                compact.state = simpleLayer.state
+                MLX.eval(compact.state)
+                return compact
+            }
+
+            return layer
+        }
+    }
+
+    private static func cacheContainsQuantizedLayers(_ cache: [KVCache]) -> Bool {
+        cache.contains { $0 is QuantizedKVCache }
     }
 }

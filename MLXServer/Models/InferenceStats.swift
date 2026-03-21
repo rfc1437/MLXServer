@@ -447,6 +447,11 @@ final class InferenceStats {
     var cacheMemoryUsagePercent: Double = 0
     var cachedEntries: [TokenPrefixCache.EntrySummary] = []
 
+    // MARK: - Quantization stats (Phase 6)
+
+    var kvQuantizationEnabled: Bool = false
+    var quantizationBytesSaved: Int = 0
+
     // MARK: - Time series data (ring buffers for charts)
 
     struct DataPoint: Identifiable {
@@ -544,6 +549,8 @@ final class InferenceStats {
         cacheMemoryBudgetBytes = cache.memoryBudgetBytes
         cacheMemoryUsagePercent = cache.memoryUsagePercent
         cachedEntries = cache.entries
+        kvQuantizationEnabled = cache.quantizationEnabled
+        quantizationBytesSaved = cache.quantizationBytesSaved
 
         let now = Date.now
         let genDelta = snap.totalGenerationTokens - lastGenerationTokenCount

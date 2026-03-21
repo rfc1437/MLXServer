@@ -43,6 +43,14 @@ struct MonitorView: View {
                         color: .blue
                     )
                     metricCard(
+                        title: "Cache Quantization",
+                        value: stats.kvQuantizationEnabled ? "ON" : "OFF",
+                        detail: stats.kvQuantizationEnabled && stats.quantizationBytesSaved > 0
+                            ? "saved " + formatByteCount(stats.quantizationBytesSaved)
+                            : "8-bit compression",
+                        color: stats.kvQuantizationEnabled && stats.quantizationBytesSaved > 0 ? .mint : .secondary
+                    )
+                    metricCard(
                         title: "Cache Match",
                         value: formatTokenCount(stats.cacheMatchDepth),
                         detail: stats.currentCacheMatchedPromptTokens > 0
