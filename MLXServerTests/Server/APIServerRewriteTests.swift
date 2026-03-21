@@ -1174,6 +1174,102 @@ final class APIServerRewriteTests: XCTestCase {
         XCTAssertGreaterThan(finalLiveSnapshot.totalCacheReusePromptTokens, afterDisconnectLiveSnapshot.totalCacheReusePromptTokens)
     }
 
+    func testAPIServerUsesModelDefaultsAndRequestOverridesTakePrecedence() async throws {
+        let modelId = self.genericModelId
+        let originalSettings = Preferences.generationSettings(forModelId: modelId)
+        let collector = GenerationSettingsEventCollector()
+
+        Preferences.setGenerationSettings(
+            GenerationSettings(
+                temperature: 0.11,
+                topP: 0.77,
+                topK: 9,
+                minP: 0.04,
+                maxTokens: 3,
+                repetitionPenalty: 1.18,
+                presencePenalty: 0.25,
+                frequencyPenalty: 0.4,
+                thinkingEnabled: false
+            ),
+            forModelId: modelId
+        )
+        APIServer.debugGenerationSettingsEventHandler = { event in
+            Task {
+                await collector.record(event)
+            }
+        }
+
+        defer {
+            Preferences.setGenerationSettings(originalSettings, forModelId: modelId)
+            APIServer.debugGenerationSettingsEventHandler = nil
+        }
+
+        let harness = try await makeHarness(initialModelId: modelId)
+        defer { harness.stop() }
+
+        _ = try await sendChatCompletion(
+            APIChatCompletionRequest(
+                model: modelId,
+                messages: [
+                    APIChatMessage(role: "user", content: .text("Reply with one short word."), name: nil, tool_calls: nil, tool_call_id: nil)
+                ],
+                stream: false
+            ),
+            port: harness.port
+        )
+
+        try await waitUntil(timeoutSeconds: 5) {
+            await collector.events().count == 1
+        }
+
+        let firstEvents = await collector.events()
+        let firstEvent = try XCTUnwrap(firstEvents.first)
+        XCTAssertEqual(firstEvent.settings.temperature, 0.11)
+        XCTAssertEqual(firstEvent.settings.topP, 0.77)
+        XCTAssertEqual(firstEvent.settings.topK, 9)
+        XCTAssertEqual(firstEvent.settings.minP, 0.04)
+        XCTAssertEqual(firstEvent.settings.maxTokens, 3)
+        XCTAssertEqual(firstEvent.settings.repetitionPenalty, 1.18)
+        XCTAssertEqual(firstEvent.settings.presencePenalty, 0.25)
+        XCTAssertEqual(firstEvent.settings.frequencyPenalty, 0.4)
+        XCTAssertFalse(firstEvent.settings.thinkingEnabled)
+
+        _ = try await sendChatCompletion(
+            APIChatCompletionRequest(
+                model: modelId,
+                messages: [
+                    APIChatMessage(role: "user", content: .text("Reply with one short word."), name: nil, tool_calls: nil, tool_call_id: nil)
+                ],
+                temperature: 0.62,
+                top_p: 0.55,
+                max_tokens: 5,
+                stream: false,
+                frequency_penalty: 0.1,
+                presence_penalty: 0.2,
+                top_k: 4,
+                min_p: 0.02,
+                repetition_penalty: 1.05
+            ),
+            port: harness.port
+        )
+
+        try await waitUntil(timeoutSeconds: 5) {
+            await collector.events().count == 2
+        }
+
+        let secondEvents = await collector.events()
+        let secondEvent = try XCTUnwrap(secondEvents.last)
+        XCTAssertEqual(secondEvent.settings.temperature, 0.62)
+        XCTAssertEqual(secondEvent.settings.topP, 0.55)
+        XCTAssertEqual(secondEvent.settings.topK, 4)
+        XCTAssertEqual(secondEvent.settings.minP, 0.02)
+        XCTAssertEqual(secondEvent.settings.maxTokens, 5)
+        XCTAssertEqual(secondEvent.settings.repetitionPenalty, 1.05)
+        XCTAssertEqual(secondEvent.settings.presencePenalty, 0.2)
+        XCTAssertEqual(secondEvent.settings.frequencyPenalty, 0.1)
+        XCTAssertFalse(secondEvent.settings.thinkingEnabled)
+    }
+
     func testStreamingDisconnectStopsServerWorkWithinTwoHundredMilliseconds() async throws {
         let harness = try await makeHarness()
         defer { harness.stop() }
@@ -1679,6 +1775,18 @@ private actor LookupEventCollector {
     }
 
     func events() -> [APIServer.DebugLookupEvent] {
+        recorded
+    }
+}
+
+private actor GenerationSettingsEventCollector {
+    private var recorded: [APIServer.DebugGenerationSettingsEvent] = []
+
+    func record(_ event: APIServer.DebugGenerationSettingsEvent) {
+        recorded.append(event)
+    }
+
+    func events() -> [APIServer.DebugGenerationSettingsEvent] {
         recorded
     }
 }

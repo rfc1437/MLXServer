@@ -15,12 +15,19 @@ final class APIServer {
         let matchedTokenCount: Int
     }
 
+    struct DebugGenerationSettingsEvent: Sendable {
+        let requestId: String
+        let modelId: String
+        let settings: GenerationSettings
+    }
+
     private struct ActiveRequest {
         let connection: NWConnection
         let cancellation: CancellationToken
     }
 
     nonisolated(unsafe) static var debugLookupEventHandler: (@Sendable (DebugLookupEvent) -> Void)?
+    nonisolated(unsafe) static var debugGenerationSettingsEventHandler: (@Sendable (DebugGenerationSettingsEvent) -> Void)?
 
     var isRunning = false
     var port: Int = 1234
@@ -256,15 +263,26 @@ final class APIServer {
 
         modelManager.touchActivity()
 
-        let isStream = request.stream ?? false
-        let temperature = request.temperature ?? 0.7
-        let topP = request.top_p ?? 1.0
-        let maxTokens = request.max_tokens ?? 4096
         let requestId = "chatcmpl-\(UUID().uuidString.prefix(12).lowercased())"
         let created = Int(Date().timeIntervalSince1970)
         let modelName = request.model ?? modelManager.currentModel?.repoId ?? "unknown"
         let currentModel = modelManager.currentModel
         let contextLength = modelManager.currentModel?.contextLength ?? 0
+        let baseSettings = Preferences.generationSettings(forModelId: currentModel?.id ?? ModelConfig.default.id)
+        let generationSettings = baseSettings.applying(
+            GenerationSettingsOverride(
+                temperature: request.temperature,
+                topP: request.top_p,
+                topK: request.top_k,
+                minP: request.min_p,
+                maxTokens: request.max_tokens,
+                repetitionPenalty: request.repetition_penalty,
+                presencePenalty: request.presence_penalty,
+                frequencyPenalty: request.frequency_penalty
+            )
+        )
+        let isStream = request.stream ?? false
+        let maxTokens = generationSettings.maxTokens
 
         if let tools = request.tools, !tools.isEmpty, currentModel?.supportsTools != true {
             sendResponse(
@@ -281,9 +299,13 @@ final class APIServer {
         let preparedPrompt = PromptBuilder.build(
             from: request,
             modelId: currentModelRepoId,
-            thinkingEnabled: Preferences.enableThinking
+            thinkingEnabled: generationSettings.thinkingEnabled
         )
         let isQwen = currentModelRepoId.lowercased().contains("qwen")
+
+        Self.debugGenerationSettingsEventHandler?(
+            DebugGenerationSettingsEvent(requestId: requestId, modelId: currentModelRepoId, settings: generationSettings)
+        )
 
         if preparedPrompt.containsImages, currentModel?.supportsImages != true {
             LiveCounters.shared.requestCompleted(requestId: requestId, generationTokens: 0)
@@ -315,8 +337,16 @@ final class APIServer {
 
         let generateParams = GenerateParameters(
             maxTokens: maxTokens,
-            temperature: Float(temperature),
-            topP: Float(topP)
+            temperature: Float(generationSettings.temperature),
+            topP: Float(generationSettings.topP),
+            topK: generationSettings.topK,
+            minP: Float(generationSettings.minP),
+            repetitionPenalty: generationSettings.repetitionPenalty.map(Float.init),
+            repetitionContextSize: 128,
+            presencePenalty: generationSettings.presencePenalty.map(Float.init),
+            presenceContextSize: 128,
+            frequencyPenalty: generationSettings.frequencyPenalty.map(Float.init),
+            frequencyContextSize: 128
         )
         let currentModelId = modelManager.currentModel?.id ?? modelName
         let engine = InferenceEngine(container: container)

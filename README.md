@@ -42,7 +42,7 @@ This is intended for targeted validation while keeping the normal default as the
 ## App Features
 
 - **Chat interface** with markdown rendering and model-aware image attachments (file picker, drag & drop, clipboard paste, Finder copy-paste on vision-capable models)
-- **Scene-based chat starts** — New Chat opens a scene picker with Neutral plus saved scenes, each with an optional model override, a scene prompt layered onto the base system prompt, and an auto-sent starter prompt
+- **Scene-based chat starts** — New Chat opens a scene picker with Neutral plus saved scenes, each with an optional model override, a scene prompt layered onto the base system prompt, an auto-sent starter prompt, and optional generation-setting overrides for chat-specific behavior
 - **Model picker** in toolbar with local/download status indicators and re-download button
 - **Download progress modal** — shows file progress, percentage, and speed when downloading a new model
 - **Thinking mode** — models like Qwen3.5 can reason internally before responding; thinking content appears in a collapsible box. Toggle on/off in Settings.
@@ -52,7 +52,7 @@ This is intended for targeted validation while keeping the normal default as the
 - **Status bar** showing model name, context window, tokens/sec, token counts, GPU memory, API server status
 - **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+O` (open chat document), `Cmd+S` (save chat document), `Cmd+Shift+S` (save chat document as), `Cmd+Shift+E` (export), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3/4/5` (switch models)
 - **Scene management** — create and edit reusable roleplay/task presets from the New Chat flow or Settings
-- **Settings** (`Cmd+,`): default model, thinking mode toggle, base system prompt, scene management, API port, API auto-start, idle unload timeout
+- **Settings** (`Cmd+,`): default model, per-model generation defaults (temperature, top-p/top-k, min-p, repetition/presence/frequency penalties, max tokens, thinking mode), base system prompt, scene management, API port, API auto-start, idle unload timeout
 - **Idle auto-unload** — model is unloaded after configurable idle time (resets on both user input and model output), reloaded on next request
 
 ## API Server
@@ -64,6 +64,8 @@ The embedded API server (toggle in toolbar) runs on port 1234 by default. Standa
 - `GET /health` — health check
 
 Capability checks are enforced server-side. If a request sends images to a text-only model or tools to a model without tool support, the server returns a `400 invalid_request_error`.
+
+When a chat-completions request omits generation parameters, the API server falls back to the saved per-model defaults from Settings. Request-supplied values still take precedence on a per-call basis.
 
 ### Model Swapping
 

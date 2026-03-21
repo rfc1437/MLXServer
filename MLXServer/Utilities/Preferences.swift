@@ -6,6 +6,7 @@ enum Preferences {
 
     private static let jsonEncoder = JSONEncoder()
     private static let jsonDecoder = JSONDecoder()
+    private static let legacyThinkingDefault = true
 
     // MARK: - Last used model
 
@@ -79,12 +80,53 @@ enum Preferences {
     // MARK: - Thinking mode
 
     private static let enableThinkingKey = "enableThinking"
+    private static let modelGenerationSettingsKey = "modelGenerationSettings"
 
     /// Whether to enable thinking/reasoning mode for models that support it (e.g. Qwen3.5).
     /// When disabled, the model skips internal reasoning and responds directly.
     static var enableThinking: Bool {
-        get { defaults.object(forKey: enableThinkingKey) == nil ? true : defaults.bool(forKey: enableThinkingKey) }
-        set { defaults.set(newValue, forKey: enableThinkingKey) }
+        get {
+            let modelId = defaultModelId ?? lastModelId ?? ModelConfig.default.id
+            if modelGenerationSettingsMap[modelId] != nil {
+                return generationSettings(forModelId: modelId).thinkingEnabled
+            }
+            return defaults.object(forKey: enableThinkingKey) == nil ? Self.legacyThinkingDefault : defaults.bool(forKey: enableThinkingKey)
+        }
+        set {
+            let modelId = defaultModelId ?? lastModelId ?? ModelConfig.default.id
+            var settings = generationSettings(forModelId: modelId)
+            settings.thinkingEnabled = newValue
+            setGenerationSettings(settings, forModelId: modelId)
+            defaults.set(newValue, forKey: enableThinkingKey)
+        }
+    }
+
+    static func generationSettings(forModelId modelId: String) -> GenerationSettings {
+        let legacyThinking = defaults.object(forKey: enableThinkingKey) == nil ? Self.legacyThinkingDefault : defaults.bool(forKey: enableThinkingKey)
+        return (modelGenerationSettingsMap[modelId] ?? GenerationSettings.modelDefault(for: modelId, legacyThinkingEnabled: legacyThinking)).normalized()
+    }
+
+    static func setGenerationSettings(_ settings: GenerationSettings, forModelId modelId: String) {
+        var map = modelGenerationSettingsMap
+        let normalized = settings.normalized()
+        map[modelId] = normalized
+        modelGenerationSettingsMap = map
+        defaults.set(normalized.thinkingEnabled, forKey: enableThinkingKey)
+    }
+
+    static func hasGenerationSettings(forModelId modelId: String) -> Bool {
+        modelGenerationSettingsMap[modelId] != nil
+    }
+
+    private static var modelGenerationSettingsMap: [String: GenerationSettings] {
+        get {
+            guard let data = defaults.data(forKey: modelGenerationSettingsKey) else { return [:] }
+            return (try? jsonDecoder.decode([String: GenerationSettings].self, from: data)) ?? [:]
+        }
+        set {
+            guard let data = try? jsonEncoder.encode(newValue) else { return }
+            defaults.set(data, forKey: modelGenerationSettingsKey)
+        }
     }
 
     // MARK: - Idle unload

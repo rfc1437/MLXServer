@@ -28,8 +28,7 @@ final class ChatViewModel {
     private var documentId = UUID()
     private var documentCreatedAt = Date()
     private var documentSystemPromptOverride: String?
-    private var documentThinkingOverride: Bool?
-    private var documentTemperature = 0.7
+    private var documentGenerationSettingsOverride: GenerationSettings?
 
     let modelManager: ModelManager
     let apiServer = APIServer()
@@ -55,12 +54,25 @@ final class ChatViewModel {
         guard let container = modelManager.modelContainer else { return }
         if chatSession == nil {
             let systemPrompt = effectiveSystemPrompt
+            let generationSettings = effectiveGenerationSettings
             // Pass enable_thinking to the Jinja chat template context.
             // Qwen3.5 and similar models use this to control reasoning mode.
-            let thinkingContext: [String: any Sendable]? = effectiveThinkingEnabled
+            let thinkingContext: [String: any Sendable]? = generationSettings.thinkingEnabled
                 ? nil
                 : ["enable_thinking": false]
-            let generateParameters = GenerateParameters(temperature: Float(documentTemperature))
+            let generateParameters = GenerateParameters(
+                maxTokens: generationSettings.maxTokens,
+                temperature: Float(generationSettings.temperature),
+                topP: Float(generationSettings.topP),
+                topK: generationSettings.topK,
+                minP: Float(generationSettings.minP),
+                repetitionPenalty: generationSettings.repetitionPenalty.map(Float.init),
+                repetitionContextSize: 128,
+                presencePenalty: generationSettings.presencePenalty.map(Float.init),
+                presenceContextSize: 128,
+                frequencyPenalty: generationSettings.frequencyPenalty.map(Float.init),
+                frequencyContextSize: 128
+            )
             let history = conversation.messages.compactMap(historyMessage(from:))
             if history.isEmpty {
                 chatSession = ChatSession(
@@ -96,8 +108,17 @@ final class ChatViewModel {
         return parts.joined(separator: "\n\n")
     }
 
-    private var effectiveThinkingEnabled: Bool {
-        documentThinkingOverride ?? Preferences.enableThinking
+    private var effectiveGenerationSettings: GenerationSettings {
+        if let documentGenerationSettingsOverride {
+            return documentGenerationSettingsOverride
+        }
+
+        let modelId = activeScene?.resolvedModel?.id
+            ?? modelManager.currentModel?.id
+            ?? Preferences.defaultModelId
+            ?? ModelConfig.default.id
+        return Preferences.generationSettings(forModelId: modelId)
+            .applying(activeScene?.generationOverrides ?? .none)
     }
 
     func send() {
@@ -269,8 +290,7 @@ final class ChatViewModel {
         documentId = package.manifest.documentId
         documentCreatedAt = package.manifest.createdAt
         documentSystemPromptOverride = package.manifest.settings.systemPrompt
-        documentThinkingOverride = package.manifest.settings.thinkingEnabled
-        documentTemperature = package.manifest.settings.temperature
+        documentGenerationSettingsOverride = package.manifest.settings.generationSettings
         resetSession()
         lastSavedSnapshotHash = try snapshotHash()
         hasUnsavedChanges = false
@@ -316,8 +336,7 @@ final class ChatViewModel {
         documentId = UUID()
         documentCreatedAt = Date()
         documentSystemPromptOverride = nil
-        documentThinkingOverride = nil
-        documentTemperature = 0.7
+        documentGenerationSettingsOverride = nil
     }
 
     private func restoreMessage(
@@ -398,11 +417,7 @@ final class ChatViewModel {
             updatedAt: updatedAt,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0",
             model: currentStoredModelInfo,
-            settings: .init(
-                systemPrompt: effectiveSystemPrompt,
-                thinkingEnabled: effectiveThinkingEnabled,
-                temperature: documentTemperature
-            ),
+            settings: .init(systemPrompt: effectiveSystemPrompt, generationSettings: effectiveGenerationSettings),
             messages: messages,
             uiState: .init(
                 draftInput: inputText,
@@ -443,11 +458,7 @@ final class ChatViewModel {
             documentId: documentId,
             createdAt: documentCreatedAt,
             model: currentStoredModelInfo,
-            settings: .init(
-                systemPrompt: effectiveSystemPrompt,
-                thinkingEnabled: effectiveThinkingEnabled,
-                temperature: documentTemperature
-            ),
+            settings: .init(systemPrompt: effectiveSystemPrompt, generationSettings: effectiveGenerationSettings),
             messages: makeManifest(updatedAt: documentCreatedAt).messages,
             uiState: .init(draftInput: inputText, scrollAnchorMessageId: conversation.messages.last?.id)
         )
