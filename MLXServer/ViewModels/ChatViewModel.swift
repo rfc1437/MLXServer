@@ -49,6 +49,34 @@ final class ChatViewModel {
         hasUnsavedChanges ? "\(documentDisplayName) *" : documentDisplayName
     }
 
+    var currentContextLength: Int {
+        modelManager.currentModel?.contextLength ?? 0
+    }
+
+    var estimatedPromptTokens: Int {
+        let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var chatMessages = conversation.messages.compactMap(historyMessage(from:))
+        if !draft.isEmpty {
+            chatMessages.append(Chat.Message(role: .user, content: draft))
+        }
+        return PromptBuilder.estimatePromptTokens(
+            instructions: effectiveSystemPrompt,
+            chatMessages: chatMessages
+        )
+    }
+
+    var contextUsedTokens: Int {
+        if isGenerating && (promptTokens > 0 || generationTokens > 0) {
+            return promptTokens + generationTokens
+        }
+        return estimatedPromptTokens
+    }
+
+    var contextFillRatio: Double {
+        guard currentContextLength > 0 else { return 0 }
+        return min(max(Double(contextUsedTokens) / Double(currentContextLength), 0), 1)
+    }
+
     /// Ensure a ChatSession exists for the current model.
     private func ensureSession() {
         guard let container = modelManager.modelContainer else { return }

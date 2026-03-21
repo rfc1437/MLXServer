@@ -61,6 +61,20 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertEqual(prepared.additionalContext?["enable_thinking"] as? Bool, legacy.additionalContext?["enable_thinking"] as? Bool)
     }
 
+    func testEstimatePromptTokensMatchesSharedCharacterHeuristic() {
+        let messages = [
+            Chat.Message(role: .user, content: "1234567890"),
+            Chat.Message(role: .assistant, content: "abcdefghij")
+        ]
+
+        let estimated = PromptBuilder.estimatePromptTokens(
+            instructions: "system12345",
+            chatMessages: messages
+        )
+
+        XCTAssertEqual(estimated, 8)
+    }
+
     func testBuildAggregatesInstructionsAndMessages() {
         let request = APIChatCompletionRequest(
             model: "gemma",

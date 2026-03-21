@@ -96,7 +96,7 @@ enum PromptBuilder {
             additionalContext: additionalContext
         )
 
-        let estimatedPromptTokens = (instructions.count + chatMessages.reduce(0) { $0 + $1.content.count }) * 10 / 35
+        let estimatedPromptTokens = estimatePromptTokens(instructions: instructions, chatMessages: chatMessages)
 
         return PreparedPrompt(
             instructions: instructions,
@@ -109,6 +109,13 @@ enum PromptBuilder {
             additionalContext: additionalContext,
             userInput: userInput
         )
+    }
+
+    static func estimatePromptTokens(instructions: String, chatMessages: [Chat.Message]) -> Int {
+        let characterCount = instructions.count + chatMessages.reduce(0) { partial, message in
+            partial + message.content.count
+        }
+        return max(0, characterCount * 10 / 35)
     }
 
     private static func imageFingerprint(_ source: String) -> UInt64 {
