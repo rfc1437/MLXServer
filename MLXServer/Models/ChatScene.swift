@@ -53,7 +53,7 @@ struct ChatScene: Codable, Identifiable, Hashable {
 
     var resolvedModel: ModelConfig? {
         guard let modelId else { return nil }
-        return ModelConfig.availableModels.first(where: { $0.id == modelId })
+        return ModelConfig.resolve(modelId)
     }
 
     static let empty = ChatScene(name: "New Scene")

@@ -52,17 +52,26 @@ struct MLXServerApp: App {
         .commands {
             SaveChatCommands()
             SceneCommands()
+            ModelCommands()
         }
 
         Window("Scenes", id: SceneManagementWindow.windowID) {
             SceneManagementView()
+                .environment(modelManager)
                 .environment(sceneStore)
         }
         .defaultSize(width: 900, height: 560)
 
+        Window("Models", id: ModelManagementWindow.windowID) {
+            ModelManagementView()
+                .environment(modelManager)
+        }
+        .defaultSize(width: 900, height: 620)
+
         #if os(macOS)
         Settings {
             SettingsView()
+                .environment(modelManager)
                 .environment(sceneStore)
         }
         #endif

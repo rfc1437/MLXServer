@@ -29,6 +29,7 @@ struct ContentView: View {
         AnyView(mainContent)
             .navigationTitle(navigationTitleText)
             .onAppear {
+                modelManager.refreshAvailableModels()
                 if chatVM == nil {
                     let vm = ChatViewModel(modelManager: modelManager)
                     chatVM = vm
@@ -68,7 +69,7 @@ struct ContentView: View {
         AnyView(lifecycleContent)
             .alert("Model Error", isPresented: $showLoadError) {
                 Button("Retry") {
-                    if let config = modelManager.currentModel ?? ModelConfig.availableModels.first {
+                    if let config = modelManager.currentModel ?? modelManager.availableModels.first {
                         Task { await modelManager.loadModel(config) }
                     }
                 }
@@ -228,7 +229,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var modelSwitchShortcuts: some View {
-        ForEach(Array(ModelConfig.availableModels.enumerated()), id: \.element.id) { index, config in
+        ForEach(Array(ModelConfig.curatedModels.enumerated()), id: \.element.id) { index, config in
             if index < 9 {
                 Button("") {
                     Task { await modelManager.loadModel(config) }
@@ -420,7 +421,7 @@ struct ContentView: View {
             guard modelManager.currentModel == nil else { return }
 
             let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
-            if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {
+            if let config = ModelConfig.resolve(modelId) {
                 await modelManager.loadModel(config)
             }
         }

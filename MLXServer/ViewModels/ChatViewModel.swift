@@ -559,7 +559,7 @@ final class ChatViewModel {
 
             if modelManager.currentModel == nil {
                 let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
-                if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {
+                if let config = ModelConfig.resolve(modelId) {
                     await modelManager.loadModel(config)
                 }
             }

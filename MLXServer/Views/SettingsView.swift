@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(ModelManager.self) private var modelManager
     @Environment(SceneStore.self) private var sceneStore
     @State private var systemPrompt: String = Preferences.systemPrompt
     @State private var apiPort: String = String(Preferences.apiPort)
@@ -29,7 +30,7 @@ struct SettingsView: View {
         Form {
             Section("Startup") {
                 Picker("Default model", selection: $defaultModelId) {
-                    ForEach(ModelConfig.availableModels) { model in
+                    ForEach(modelManager.availableModels) { model in
                         Text(model.displayName).tag(model.id)
                     }
                 }
@@ -44,7 +45,7 @@ struct SettingsView: View {
 
             Section("Generation Defaults") {
                 Picker("Defaults for model", selection: $generationDefaultsModelId) {
-                    ForEach(ModelConfig.availableModels) { model in
+                    ForEach(modelManager.availableModels) { model in
                         Text(model.displayName).tag(model.id)
                     }
                 }
@@ -164,6 +165,15 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 450, height: 650)
+        .onAppear {
+            modelManager.refreshAvailableModels()
+            if !modelManager.availableModels.contains(where: { $0.id == defaultModelId }) {
+                defaultModelId = modelManager.availableModels.first?.id ?? ModelConfig.default.id
+            }
+            if !modelManager.availableModels.contains(where: { $0.id == generationDefaultsModelId }) {
+                generationDefaultsModelId = defaultModelId
+            }
+        }
     }
 
     private var generationDefaultsBinding: Binding<GenerationSettings> {

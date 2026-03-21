@@ -7,14 +7,14 @@ struct ModelPickerView: View {
     var body: some View {
         HStack(spacing: 8) {
             Picker("Model", selection: selectedModelBinding) {
-                ForEach(ModelConfig.availableModels) { config in
+                ForEach(modelManager.availableModels) { config in
                     Label(
-                        config.displayName,
+                        config.isCurated ? config.displayName : config.repoId,
                         systemImage: config.isLocal ? "checkmark.circle.fill" : "arrow.down.circle"
                     ).tag(config.id)
                 }
             }
-            .frame(width: 160)
+            .frame(width: 260)
             .disabled(modelManager.isLoading)
 
             // Re-download button (visible when a model is loaded)
@@ -50,9 +50,20 @@ struct ModelPickerView: View {
 
     private var selectedModelBinding: Binding<String> {
         Binding(
-            get: { modelManager.currentModel?.id ?? ModelConfig.default.id },
+            get: {
+                if let currentId = modelManager.currentModel?.id {
+                    return currentId
+                }
+                if let defaultId = Preferences.defaultModelId,
+                   let config = modelManager.availableModels.first(where: { $0.id == defaultId || $0.repoId == defaultId }) {
+                    return config.id
+                }
+                return ModelConfig.default.id
+            },
             set: { newId in
-                guard let config = ModelConfig.availableModels.first(where: { $0.id == newId }) else { return }
+                guard let config = modelManager.availableModels.first(where: { $0.id == newId }) ?? ModelConfig.resolve(newId) else {
+                    return
+                }
                 Task {
                     await modelManager.loadModel(config)
                 }

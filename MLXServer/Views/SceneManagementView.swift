@@ -210,6 +210,7 @@ struct SceneManagementView: View {
 }
 
 private struct SceneEditorView: View {
+    @Environment(ModelManager.self) private var modelManager
     @Environment(SceneStore.self) private var sceneStore
 
     let scene: ChatScene
@@ -221,7 +222,7 @@ private struct SceneEditorView: View {
 
                 Picker("Model", selection: modelBinding) {
                     Text("Current model").tag(Optional<String>.none)
-                    ForEach(ModelConfig.availableModels) { model in
+                    ForEach(modelManager.availableModels) { model in
                         Text(model.displayName).tag(Optional(model.id))
                     }
                 }
@@ -257,6 +258,9 @@ private struct SceneEditorView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(scene.displayName)
+        .onAppear {
+            modelManager.refreshAvailableModels()
+        }
     }
 
     private var modelBinding: Binding<String?> {

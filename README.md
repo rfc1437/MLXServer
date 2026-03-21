@@ -44,7 +44,8 @@ This is intended for targeted validation while keeping the normal default as the
 
 - **Chat interface** with markdown rendering and model-aware image attachments (file picker, drag & drop, clipboard paste, Finder copy-paste on vision-capable models)
 - **Scene-based chat starts** — New Chat opens a scene picker with Neutral plus saved scenes, each with an optional model override, a scene prompt layered onto the base system prompt, an auto-sent starter prompt, and optional generation-setting overrides for chat-specific behavior
-- **Model picker** in toolbar with local/download status indicators and re-download button
+- **Model picker** in toolbar with curated defaults plus any locally discovered MLX models on disk
+- **Models window** in the menu for downloading a model by HuggingFace ID, inspecting on-disk model sizes, and deleting local model folders
 - **Download progress modal** — shows file progress, percentage, and speed when downloading a new model
 - **Thinking mode** — models like Qwen3.5 can reason internally before responding; thinking content appears in a collapsible box. Toggle on/off in Settings.
 - **Streaming responses** with live token display

@@ -19,7 +19,10 @@ final class ModelManager {
         let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
         return HubApi(downloadBase: cachesDir, cache: nil)
     }()
+
     var currentModel: ModelConfig?
+    var availableModels: [ModelConfig]
+    private(set) var discoveredLocalModels: [LocalModelResolver.LocalModelInfo] = []
     var modelContainer: ModelContainer?
     var isLoading = false
     var downloadProgress: Double = 0
@@ -35,6 +38,50 @@ final class ModelManager {
     private var idleTimer: Timer?
     private(set) var lastUsed: Date?
     private var latestLoadRequestID = UUID()
+
+    init() {
+        availableModels = []
+        refreshAvailableModels()
+    }
+
+    var curatedModels: [ModelConfig] {
+        availableModels.filter(\.isCurated)
+    }
+
+    var localModelsOnDisk: [ModelConfig] {
+        availableModels
+            .filter(\.isLocal)
+            .sorted {
+                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+    }
+
+    func refreshAvailableModels() {
+        discoveredLocalModels = LocalModelResolver.discoveredLocalModels()
+        availableModels = ModelConfig.mergedModels(localModels: discoveredLocalModels)
+
+        if let currentModel {
+            self.currentModel = availableModels.first(where: { $0.repoId == currentModel.repoId }) ?? currentModel
+        }
+    }
+
+    func discoveredLocalModelInfo(repoId: String) -> LocalModelResolver.LocalModelInfo? {
+        discoveredLocalModels.first(where: { $0.repoId == repoId })
+    }
+
+    func baselineModel(repoId: String) -> ModelConfig? {
+        ModelConfig.baselineModel(forRepoId: repoId, localModels: discoveredLocalModels)
+    }
+
+    func saveMetadataOverride(_ override: ModelMetadataOverride, for config: ModelConfig) {
+        Preferences.setModelMetadataOverride(override, forRepoId: config.repoId)
+        refreshAvailableModels()
+    }
+
+    func clearMetadataOverride(for config: ModelConfig) {
+        Preferences.removeModelMetadataOverride(forRepoId: config.repoId)
+        refreshAvailableModels()
+    }
 
     private func clearLoadedState() {
         idleTimer?.invalidate()
@@ -55,7 +102,11 @@ final class ModelManager {
     /// Prefers the local snapshot from ~/.cache/huggingface/hub/ (shared with the Python server).
     /// Only downloads if the model isn't cached locally.
     func loadModel(_ config: ModelConfig) async {
-        if currentModel?.id == config.id && modelContainer != nil {
+        refreshAvailableModels()
+        let effectiveConfig = availableModels.first(where: { $0.repoId == config.repoId }) ?? config
+
+        if currentModel?.repoId == effectiveConfig.repoId && modelContainer != nil {
+            currentModel = effectiveConfig
             return // already loaded
         }
 
@@ -65,10 +116,10 @@ final class ModelManager {
         MLX.GPU.clearCache()
         isLoading = true
         downloadProgress = 0
-        loadingModelName = config.displayName
+        loadingModelName = effectiveConfig.displayName
         errorMessage = nil
 
-        let needsDownload = !config.isLocal
+        let needsDownload = !effectiveConfig.isLocal
         if needsDownload {
             isDownloading = true
             downloadFilesTotal = 0
@@ -91,32 +142,23 @@ final class ModelManager {
             }
 
             let configuration: ModelConfiguration
-            if let localDir = LocalModelResolver.resolve(repoId: config.repoId) {
+            if let localDir = LocalModelResolver.resolve(repoId: effectiveConfig.repoId) {
                 configuration = ModelConfiguration(directory: localDir)
             } else {
-                configuration = config.modelConfiguration
+                configuration = effectiveConfig.modelConfiguration
             }
 
-            let container: ModelContainer
-            switch config.loaderKind {
-            case .llm:
-                container = try await LLMModelFactory.shared.loadContainer(
-                    hub: Self.hub,
-                    configuration: configuration,
-                    progressHandler: progressHandler
-                )
-            case .vlm:
-                container = try await VLMModelFactory.shared.loadContainer(
-                    hub: Self.hub,
-                    configuration: configuration,
-                    progressHandler: progressHandler
-                )
-            }
+            let container = try await Self.loadContainer(
+                for: effectiveConfig,
+                configuration: configuration,
+                progressHandler: progressHandler
+            )
 
             guard latestLoadRequestID == requestID else { return }
+            refreshAvailableModels()
             self.isDownloading = false
             self.modelContainer = container
-            self.currentModel = config
+            self.currentModel = self.availableModels.first(where: { $0.repoId == effectiveConfig.repoId }) ?? effectiveConfig
             touchActivity()
         } catch {
             guard latestLoadRequestID == requestID else { return }
@@ -133,6 +175,25 @@ final class ModelManager {
         unloadModel()
         LocalModelResolver.deleteLocal(repoId: config.repoId)
         await loadModel(config)
+    }
+
+    func addModel(repoId: String) async {
+        let repoId = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !repoId.isEmpty else {
+            errorMessage = "Enter a HuggingFace model ID."
+            return
+        }
+
+        let config = ModelConfig.resolve(repoId) ?? ModelConfig.remoteCustom(repoId: repoId)
+        await loadModel(config)
+    }
+
+    func deleteModel(_ config: ModelConfig) {
+        if currentModel?.repoId == config.repoId {
+            unloadModel()
+        }
+        _ = LocalModelResolver.deleteLocal(repoId: config.repoId)
+        refreshAvailableModels()
     }
 
     /// Unload the current model and free GPU memory.
@@ -160,5 +221,36 @@ final class ModelManager {
     /// Whether a model is ready for generation.
     var isReady: Bool {
         modelContainer != nil && !isLoading
+    }
+
+    private static func loadContainer(
+        for config: ModelConfig,
+        configuration: ModelConfiguration,
+        progressHandler: @escaping @Sendable (Progress) -> Void
+    ) async throws -> ModelContainer {
+        var lastError: Error?
+
+        for loaderKind in config.loaderKinds {
+            do {
+                switch loaderKind {
+                case .llm:
+                    return try await LLMModelFactory.shared.loadContainer(
+                        hub: Self.hub,
+                        configuration: configuration,
+                        progressHandler: progressHandler
+                    )
+                case .vlm:
+                    return try await VLMModelFactory.shared.loadContainer(
+                        hub: Self.hub,
+                        configuration: configuration,
+                        progressHandler: progressHandler
+                    )
+                }
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? NSError(domain: "ModelManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unsupported model configuration"])
     }
 }

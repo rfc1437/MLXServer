@@ -7,6 +7,7 @@ enum Preferences {
     private static let jsonEncoder = JSONEncoder()
     private static let jsonDecoder = JSONDecoder()
     private static let legacyThinkingDefault = true
+    private static let modelMetadataOverridesKey = "modelMetadataOverrides"
 
     // MARK: - Last used model
 
@@ -118,6 +119,26 @@ enum Preferences {
         modelGenerationSettingsMap[modelId] != nil
     }
 
+    static func modelMetadataOverride(forRepoId repoId: String) -> ModelMetadataOverride? {
+        modelMetadataOverridesMap[repoId]?.normalized()
+    }
+
+    static func setModelMetadataOverride(_ override: ModelMetadataOverride, forRepoId repoId: String) {
+        var map = modelMetadataOverridesMap
+        map[repoId] = override.normalized()
+        modelMetadataOverridesMap = map
+    }
+
+    static func removeModelMetadataOverride(forRepoId repoId: String) {
+        var map = modelMetadataOverridesMap
+        map.removeValue(forKey: repoId)
+        modelMetadataOverridesMap = map
+    }
+
+    static func hasModelMetadataOverride(forRepoId repoId: String) -> Bool {
+        modelMetadataOverridesMap[repoId] != nil
+    }
+
     private static var modelGenerationSettingsMap: [String: GenerationSettings] {
         get {
             guard let data = defaults.data(forKey: modelGenerationSettingsKey) else { return [:] }
@@ -126,6 +147,17 @@ enum Preferences {
         set {
             guard let data = try? jsonEncoder.encode(newValue) else { return }
             defaults.set(data, forKey: modelGenerationSettingsKey)
+        }
+    }
+
+    private static var modelMetadataOverridesMap: [String: ModelMetadataOverride] {
+        get {
+            guard let data = defaults.data(forKey: modelMetadataOverridesKey) else { return [:] }
+            return (try? jsonDecoder.decode([String: ModelMetadataOverride].self, from: data)) ?? [:]
+        }
+        set {
+            guard let data = try? jsonEncoder.encode(newValue) else { return }
+            defaults.set(data, forKey: modelMetadataOverridesKey)
         }
     }
 
