@@ -5,6 +5,16 @@ import MLXVLM
 import XCTest
 @testable import MLX_Server
 
+private struct GemmaPreprocessorConfig: Decodable {
+    let do_resize: Bool
+    let size: GemmaPreprocessorSize
+}
+
+private struct GemmaPreprocessorSize: Decodable {
+    let height: Int
+    let width: Int
+}
+
 final class ModelBackedInferenceValidationTests: XCTestCase {
     func testPromptBuilderTokenizationMatchesLegacyShapingOnLocalGemma() async throws {
         let container = try await localGemmaContainer()
@@ -144,6 +154,35 @@ final class ModelBackedInferenceValidationTests: XCTestCase {
 
         XCTAssertTrue(lease.isHit)
         XCTAssertEqual(lease.matchedTokenCount, prepared.tokens.count)
+    }
+
+    func testLarge4KImageUsesGemmaResizeConfigAndPreparesSuccessfully() async throws {
+        let container = try await localGemmaContainer()
+        let engine = InferenceEngine(container: container)
+        let preprocessorURL = try XCTUnwrap(
+            LocalModelResolver.resolve(repoId: "mlx-community/gemma-3-4b-it-4bit")?
+                .appendingPathComponent("preprocessor_config.json"),
+            "Local Gemma preprocessor config is unavailable"
+        )
+        let preprocessorData = try Data(contentsOf: preprocessorURL)
+        let preprocessor = try JSONDecoder().decode(GemmaPreprocessorConfig.self, from: preprocessorData)
+        let decoded = try XCTUnwrap(ImageDecoder.decode(TestImageFixtures.largeDataURI))
+        let userInput = UserInput(
+            prompt: .chat([
+                Chat.Message(role: .user, content: "What is in this image?", images: [decoded.image])
+            ]),
+            images: [decoded.image],
+            videos: [],
+            tools: nil,
+            additionalContext: ["enable_thinking": false]
+        )
+
+        let prepared = try await engine.prepare(userInput)
+
+        XCTAssertTrue(preprocessor.do_resize)
+        XCTAssertEqual(preprocessor.size.height, preprocessor.size.width)
+        XCTAssertLessThan(preprocessor.size.height, 4_096)
+        XCTAssertFalse(prepared.tokens.isEmpty)
     }
 
     func testTokenPrefixCacheFindsLCPHitForSameSystemDifferentUserOnLocalGemmaTokens() async throws {

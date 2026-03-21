@@ -25,6 +25,20 @@ Requires macOS 15+, Xcode 16.4+, and `xcodegen` (`brew install xcodegen`).
 open "build/Debug/MLX Server.app"
 ```
 
+Run tests with the repo entrypoint:
+
+```bash
+./test.sh
+```
+
+For focused test runs, `test.sh` also accepts `ONLY_TESTING` and forwards it to `xcodebuild -only-testing`:
+
+```bash
+ONLY_TESTING='MLXServerTests/ModelBackedInferenceValidationTests/testLarge4KImageUsesGemmaResizeConfigAndPreparesSuccessfully' ./test.sh
+```
+
+This is intended for targeted validation while keeping the normal default as the full suite.
+
 ## App Features
 
 - **Chat interface** with markdown rendering and model-aware image attachments (file picker, drag & drop, clipboard paste, Finder copy-paste on vision-capable models)

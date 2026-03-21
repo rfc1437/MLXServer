@@ -153,6 +153,61 @@ final class APIServerRewriteTests: XCTestCase {
         XCTAssertEqual(secondLookup.matchedTokenCount, secondLookup.promptTokenCount)
     }
 
+    func testSingleImageAndTextPromptProducesVisionResponse() async throws {
+        let harness = try await makeHarness(initialModelId: "gemma")
+        defer { harness.stop() }
+
+        let response = try await sendChatCompletion(
+            visionRequest(
+                modelId: "gemma",
+                dataURI: TestImageFixtures.primaryDataURI,
+                prompt: "Describe this image in one short word."
+            ),
+            port: harness.port
+        )
+
+        XCTAssertEqual(response.choices.count, 1)
+        XCTAssertFalse((response.choices[0].message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertGreaterThan(LiveCounters.shared.snapshot().totalVisionEncoderDuration, 0)
+    }
+
+    func testMultipleImagesInSingleMessageProduceVisionResponse() async throws {
+        let harness = try await makeHarness(initialModelId: "gemma")
+        defer { harness.stop() }
+
+        let request = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(
+                    role: "user",
+                    content: .parts([
+                        APIContentPart(type: "text", text: "Compare these two images in a few words.", image_url: nil),
+                        APIContentPart(type: "image_url", text: nil, image_url: APIImageURL(url: TestImageFixtures.primaryDataURI, detail: nil)),
+                        APIContentPart(type: "image_url", text: nil, image_url: APIImageURL(url: TestImageFixtures.alternateDataURI, detail: nil))
+                    ]),
+                    name: nil,
+                    tool_calls: nil,
+                    tool_call_id: nil
+                )
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 6,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        let response = try await sendChatCompletion(request, port: harness.port)
+
+        XCTAssertEqual(response.choices.count, 1)
+        XCTAssertFalse((response.choices[0].message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     func testVisionPromptDifferentImageMissesCache() async throws {
         let harness = try await makeHarness()
         defer { harness.stop() }
@@ -239,6 +294,74 @@ final class APIServerRewriteTests: XCTestCase {
         XCTAssertTrue(secondLookup.isHit)
         XCTAssertGreaterThan(secondLookup.matchedTokenCount, 0)
         XCTAssertLessThan(secondLookup.matchedTokenCount, secondLookup.promptTokenCount)
+    }
+
+    func testTextOnlyRequestOnVisionModelDoesNotRecordVisionTime() async throws {
+        let harness = try await makeHarness(initialModelId: "gemma")
+        defer { harness.stop() }
+
+        let request = APIChatCompletionRequest(
+            model: "gemma",
+            messages: [
+                APIChatMessage(role: "user", content: .text("Answer in one word: stone."), name: nil, tool_calls: nil, tool_call_id: nil)
+            ],
+            temperature: 0,
+            top_p: 1,
+            max_tokens: 2,
+            stream: false,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            n: nil
+        )
+
+        let response = try await sendChatCompletion(request, port: harness.port)
+
+        XCTAssertEqual(response.choices.count, 1)
+        XCTAssertFalse((response.choices[0].message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertEqual(LiveCounters.shared.snapshot().totalVisionEncoderDuration, 0)
+    }
+
+    func testLargeImagePromptSucceedsOnVisionModel() async throws {
+        let harness = try await makeHarness(initialModelId: "gemma")
+        defer { harness.stop() }
+
+        let response = try await sendChatCompletion(
+            visionRequest(
+                modelId: "gemma",
+                dataURI: TestImageFixtures.largeDataURI,
+                prompt: "Describe this image briefly."
+            ),
+            port: harness.port
+        )
+
+        XCTAssertEqual(response.choices.count, 1)
+        XCTAssertFalse((response.choices[0].message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertGreaterThan(LiveCounters.shared.snapshot().totalVisionEncoderDuration, 0)
+    }
+
+    func testNonVisionModelRejectsImageInputsWithClearError() async throws {
+        guard let stheno = ModelConfig.resolve("stheno"), stheno.isLocal else {
+            throw XCTSkip("Local non-vision model fixture is unavailable")
+        }
+
+        let harness = try await makeHarness(initialModelId: "stheno")
+        defer { harness.stop() }
+
+        let response = try await sendChatCompletionExpectingStatus(
+            visionRequest(
+                modelId: "stheno",
+                dataURI: TestImageFixtures.primaryDataURI,
+                prompt: "Describe this image in one word."
+            ),
+            port: harness.port,
+            expectedStatus: 400
+        )
+
+        XCTAssertTrue(response.body.contains("vision_not_supported"))
+        XCTAssertTrue(response.body.contains("does not support image inputs"))
     }
 
     func testSecondIdenticalRequestIsFullCacheHitWithZeroRebuiltPromptTokens() async throws {
@@ -1376,6 +1499,23 @@ final class APIServerRewriteTests: XCTestCase {
         let httpResponse = try XCTUnwrap(response as? HTTPURLResponse)
         XCTAssertEqual(httpResponse.statusCode, 200, String(data: data, encoding: .utf8) ?? "")
         return try JSONDecoder().decode(APIChatCompletionResponse.self, from: data)
+    }
+
+    private func sendChatCompletionExpectingStatus(
+        _ request: APIChatCompletionRequest,
+        port: UInt16,
+        expectedStatus: Int
+    ) async throws -> (statusCode: Int, body: String, bodyData: Data) {
+        let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONEncoder().encode(request)
+
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        let httpResponse = try XCTUnwrap(response as? HTTPURLResponse)
+        XCTAssertEqual(httpResponse.statusCode, expectedStatus, String(data: data, encoding: .utf8) ?? "")
+        return (httpResponse.statusCode, String(data: data, encoding: .utf8) ?? "", data)
     }
 
     private func sendModelsRequest(port: UInt16) async throws -> APIModelListResponse {
