@@ -15,6 +15,7 @@ struct ModelConfig: Identifiable, Hashable {
     let loaderKind: LoaderKind
     let supportsImages: Bool
     let supportsTools: Bool
+    let defaultGenerationSettings: GenerationSettings
 
     /// All models supported by the app.
     static let availableModels: [ModelConfig] = [
@@ -25,16 +26,28 @@ struct ModelConfig: Identifiable, Hashable {
             contextLength: 128_000,
             loaderKind: .vlm,
             supportsImages: true,
-            supportsTools: true
+            supportsTools: true,
+            defaultGenerationSettings: .technicalDefault
         ),
         ModelConfig(
             id: "qwen",
-            repoId: "mlx-community/Qwen3-VL-4B-Instruct-4bit",
-            displayName: "Qwen3 VL 4B",
+            repoId: "mlx-community/Qwen3.5-4B-MLX-4bit",
+            displayName: "Qwen3.5 4B",
             contextLength: 256_000,
             loaderKind: .vlm,
             supportsImages: true,
-            supportsTools: true
+            supportsTools: true,
+            defaultGenerationSettings: .technicalDefault
+        ),
+        ModelConfig(
+            id: "qwen3.5-0.8b",
+            repoId: "mlx-community/Qwen3.5-0.8B-4bit",
+            displayName: "Qwen3.5 0.8B",
+            contextLength: 256_000,
+            loaderKind: .vlm,
+            supportsImages: true,
+            supportsTools: true,
+            defaultGenerationSettings: .technicalDefault
         ),
         ModelConfig(
             id: "qwen3.5-9b",
@@ -43,7 +56,8 @@ struct ModelConfig: Identifiable, Hashable {
             contextLength: 256_000,
             loaderKind: .vlm,
             supportsImages: true,
-            supportsTools: true
+            supportsTools: true,
+            defaultGenerationSettings: .technicalDefault
         ),
         ModelConfig(
             id: "stheno",
@@ -52,16 +66,8 @@ struct ModelConfig: Identifiable, Hashable {
             contextLength: 8_192,
             loaderKind: .llm,
             supportsImages: false,
-            supportsTools: false
-        ),
-        ModelConfig(
-            id: "unslopnemo",
-            repoId: "mlx-community/UnslopNemo-12B-v4.1-4bit",
-            displayName: "UnslopNemo 12B",
-            contextLength: 131_072,
-            loaderKind: .llm,
-            supportsImages: false,
-            supportsTools: false
+            supportsTools: false,
+            defaultGenerationSettings: .roleplayDefault
         ),
     ]
 

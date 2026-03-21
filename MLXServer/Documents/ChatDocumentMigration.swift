@@ -12,6 +12,8 @@ enum ChatDocumentMigration {
         switch envelope.schemaVersion {
         case 1:
             return try decoder.decode(ChatDocumentManifest.self, from: data)
+        case 2:
+            return try decoder.decode(ChatDocumentManifest.self, from: data)
         default:
             throw ChatDocumentError.unsupportedSchemaVersion(envelope.schemaVersion)
         }

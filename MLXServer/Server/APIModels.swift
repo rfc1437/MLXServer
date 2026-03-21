@@ -152,14 +152,51 @@ struct APIChatCompletionRequest: Codable {
     let messages: [APIChatMessage]
     let temperature: Double?
     let top_p: Double?
+    let top_k: Int?
+    let min_p: Double?
     let max_tokens: Int?
     let stream: Bool?
     let stop: StopSequence?
     let tools: [APIToolDefinition]?
     let tool_choice: AnyCodable?
+    let repetition_penalty: Double?
     let frequency_penalty: Double?
     let presence_penalty: Double?
     let n: Int?
+
+    init(
+        model: String?,
+        messages: [APIChatMessage],
+        temperature: Double? = nil,
+        top_p: Double? = nil,
+        max_tokens: Int? = nil,
+        stream: Bool? = nil,
+        stop: StopSequence? = nil,
+        tools: [APIToolDefinition]? = nil,
+        tool_choice: AnyCodable? = nil,
+        frequency_penalty: Double? = nil,
+        presence_penalty: Double? = nil,
+        n: Int? = nil,
+        top_k: Int? = nil,
+        min_p: Double? = nil,
+        repetition_penalty: Double? = nil
+    ) {
+        self.model = model
+        self.messages = messages
+        self.temperature = temperature
+        self.top_p = top_p
+        self.top_k = top_k
+        self.min_p = min_p
+        self.max_tokens = max_tokens
+        self.stream = stream
+        self.stop = stop
+        self.tools = tools
+        self.tool_choice = tool_choice
+        self.repetition_penalty = repetition_penalty
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
+        self.n = n
+    }
 
     enum StopSequence: Codable {
         case single(String)

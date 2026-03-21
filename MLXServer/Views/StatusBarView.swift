@@ -31,6 +31,10 @@ struct StatusBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            if let model = modelManager.currentModel, model.contextLength > 0 {
+                contextFillView(totalContext: model.contextLength)
+            }
+
             Spacer()
 
             // GPU memory
@@ -77,5 +81,44 @@ struct StatusBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(.bar)
+    }
+
+    @ViewBuilder
+    private func contextFillView(totalContext: Int) -> some View {
+        let usedTokens = viewModel.contextUsedTokens
+        let ratio = viewModel.contextFillRatio
+        let percent = Int((ratio * 100).rounded())
+
+        HStack(spacing: 6) {
+            Capsule()
+                .fill(.quaternary)
+                .frame(width: 48, height: 6)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(contextFillColor(for: ratio))
+                        .frame(width: max(4, 48 * ratio), height: 6)
+                }
+
+            Text("Ctx \(percent)%")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .help("Approximate context usage: \(formatTokenCount(usedTokens)) of \(formatTokenCount(totalContext)) tokens")
+    }
+
+    private func contextFillColor(for ratio: Double) -> Color {
+        if ratio >= 0.9 { return .red }
+        if ratio >= 0.7 { return .yellow }
+        return .blue
+    }
+
+    private func formatTokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+        if count >= 1_000 {
+            return String(format: "%.1fk", Double(count) / 1_000)
+        }
+        return "\(count)"
     }
 }

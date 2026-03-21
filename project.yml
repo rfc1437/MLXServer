@@ -42,3 +42,25 @@ targets:
         product: MLXLMCommon
       - package: MarkdownUI
         product: MarkdownUI
+  MLXServerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - MLXServerTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/MLX Server.app/Contents/MacOS/MLX Server"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: MLXServer
+
+schemes:
+  MLXServer:
+    build:
+      targets:
+        MLXServer: all
+        MLXServerTests: [test]
+    test:
+      targets:
+        - MLXServerTests

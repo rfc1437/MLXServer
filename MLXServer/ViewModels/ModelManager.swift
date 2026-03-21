@@ -34,6 +34,22 @@ final class ModelManager {
 
     private var idleTimer: Timer?
     private(set) var lastUsed: Date?
+    private var latestLoadRequestID = UUID()
+
+    private func clearLoadedState() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        lastUsed = nil
+        modelContainer = nil
+        currentModel = nil
+        isLoading = false
+        isDownloading = false
+        downloadProgress = 0
+        loadingModelName = ""
+        downloadFilesTotal = 0
+        downloadFilesCompleted = 0
+        downloadSpeed = 0
+    }
 
     /// Load a model, unloading the current one first.
     /// Prefers the local snapshot from ~/.cache/huggingface/hub/ (shared with the Python server).
@@ -43,7 +59,10 @@ final class ModelManager {
             return // already loaded
         }
 
-        unloadModel()
+        let requestID = UUID()
+        latestLoadRequestID = requestID
+        clearLoadedState()
+        MLX.GPU.clearCache()
         isLoading = true
         downloadProgress = 0
         loadingModelName = config.displayName
@@ -94,15 +113,18 @@ final class ModelManager {
                 )
             }
 
+            guard latestLoadRequestID == requestID else { return }
             self.isDownloading = false
             self.modelContainer = container
             self.currentModel = config
             touchActivity()
         } catch {
+            guard latestLoadRequestID == requestID else { return }
             self.isDownloading = false
             self.errorMessage = "Failed to load model: \(error.localizedDescription)"
         }
 
+        guard latestLoadRequestID == requestID else { return }
         isLoading = false
     }
 
@@ -115,11 +137,8 @@ final class ModelManager {
 
     /// Unload the current model and free GPU memory.
     func unloadModel() {
-        idleTimer?.invalidate()
-        idleTimer = nil
-        lastUsed = nil
-        modelContainer = nil
-        currentModel = nil
+        latestLoadRequestID = UUID()
+        clearLoadedState()
         MLX.GPU.clearCache()
     }
 

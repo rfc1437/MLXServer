@@ -7,11 +7,14 @@ Native macOS app for running local LLMs on Apple Silicon via [MLX](https://githu
 | Alias | Model | Context | Loader | Capabilities |
 |-------|-------|---------|--------|-------------|
 | `gemma` | `mlx-community/gemma-3-4b-it-4bit` | 128k | `VLMModelFactory` | Vision, tool use (`tool_code` blocks) |
-| `qwen` | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 256k | `VLMModelFactory` | Vision, tool use (`<tool_call>` tags) |
-| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `LLMModelFactory` | Vision, thinking mode, tool use |
+| `qwen` | `mlx-community/Qwen3.5-4B-MLX-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
+| `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
+| `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
 | `stheno` | `synk/L3-8B-Stheno-v3.2-MLX` | 8k | `LLMModelFactory` | Text-only, llama-based |
 
 Any model in MLX format on HuggingFace can be added — there is no restriction on uploader or architecture.
+
+Developer note: the test suite uses `qwen3.5-0.8b` as the main live-model target because it is substantially faster and lighter than the larger Qwen variants, but some tests still run on Gemma 3 because they validate Gemma-specific prompt shaping, cache-reuse behavior, and tool-call behavior that did not match Qwen3.5 0.8B closely enough.
 
 ## Quick Start
 
@@ -22,10 +25,24 @@ Requires macOS 15+, Xcode 16.4+, and `xcodegen` (`brew install xcodegen`).
 open "build/Debug/MLX Server.app"
 ```
 
+Run tests with the repo entrypoint:
+
+```bash
+./test.sh
+```
+
+For focused test runs, `test.sh` also accepts `ONLY_TESTING` and forwards it to `xcodebuild -only-testing`:
+
+```bash
+ONLY_TESTING='MLXServerTests/ModelBackedInferenceValidationTests/testLarge4KImageUsesGemmaResizeConfigAndPreparesSuccessfully' ./test.sh
+```
+
+This is intended for targeted validation while keeping the normal default as the full suite.
+
 ## App Features
 
 - **Chat interface** with markdown rendering and model-aware image attachments (file picker, drag & drop, clipboard paste, Finder copy-paste on vision-capable models)
-- **Scene-based chat starts** — New Chat opens a scene picker with Neutral plus saved scenes, each with an optional model override, a scene prompt layered onto the base system prompt, and an auto-sent starter prompt
+- **Scene-based chat starts** — New Chat opens a scene picker with Neutral plus saved scenes, each with an optional model override, a scene prompt layered onto the base system prompt, an auto-sent starter prompt, and optional generation-setting overrides for chat-specific behavior
 - **Model picker** in toolbar with local/download status indicators and re-download button
 - **Download progress modal** — shows file progress, percentage, and speed when downloading a new model
 - **Thinking mode** — models like Qwen3.5 can reason internally before responding; thinking content appears in a collapsible box. Toggle on/off in Settings.
@@ -33,9 +50,9 @@ open "build/Debug/MLX Server.app"
 - **Native chat documents** — save chats as `.mlxchat` package documents, reopen them from File > Open Chat or by double-clicking them in Finder, and continue the conversation with restored model context, thinking blocks, and images
 - **Export chat** — File > Export Chat (Cmd+Shift+E) saves conversations as Markdown or RTF (Pages-compatible)
 - **Status bar** showing model name, context window, tokens/sec, token counts, GPU memory, API server status
-- **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+O` (open chat document), `Cmd+S` (save chat document), `Cmd+Shift+S` (save chat document as), `Cmd+Shift+E` (export), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3/4` (switch models)
+- **Keyboard shortcuts**: `Cmd+N` (new chat), `Cmd+O` (open chat document), `Cmd+S` (save chat document), `Cmd+Shift+S` (save chat document as), `Cmd+Shift+E` (export), `Cmd+Return` (send), `Escape` (stop), `Cmd+1/2/3/4/5` (switch models)
 - **Scene management** — create and edit reusable roleplay/task presets from the New Chat flow or Settings
-- **Settings** (`Cmd+,`): default model, thinking mode toggle, base system prompt, scene management, API port, API auto-start, idle unload timeout
+- **Settings** (`Cmd+,`): default model, per-model generation defaults (temperature, top-p/top-k, min-p, repetition/presence/frequency penalties, max tokens, thinking mode), base system prompt, scene management, API port, API auto-start, idle unload timeout
 - **Idle auto-unload** — model is unloaded after configurable idle time (resets on both user input and model output), reloaded on next request
 
 ## API Server
@@ -47,6 +64,8 @@ The embedded API server (toggle in toolbar) runs on port 1234 by default. Standa
 - `GET /health` — health check
 
 Capability checks are enforced server-side. If a request sends images to a text-only model or tools to a model without tool support, the server returns a `400 invalid_request_error`.
+
+When a chat-completions request omits generation parameters, the API server falls back to the saved per-model defaults from Settings. Request-supplied values still take precedence on a per-call basis.
 
 ### Model Swapping
 
@@ -75,7 +94,7 @@ Pass images as base64 data URIs in the `image_url` content part:
 }
 ```
 
-Text-only models such as `qwen3.5-9b` and `stheno` reject image inputs.
+Text-only models such as `stheno` reject image inputs.
 
 ### Tool Use
 

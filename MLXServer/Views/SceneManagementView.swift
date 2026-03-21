@@ -246,6 +246,14 @@ private struct SceneEditorView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Generation Overrides") {
+                GenerationOverridesEditor(
+                    overrides: generationOverridesBinding,
+                    inheritedSettings: inheritedGenerationSettings,
+                    inheritedSource: inheritedGenerationSource
+                )
+            }
         }
         .formStyle(.grouped)
         .navigationTitle(scene.displayName)
@@ -271,5 +279,36 @@ private struct SceneEditorView: View {
                 }
             }
         )
+    }
+
+    private var generationOverridesBinding: Binding<GenerationSettingsOverride> {
+        Binding(
+            get: { sceneStore.scene(id: scene.id)?.generationOverrides ?? scene.generationOverrides },
+            set: { newValue in
+                sceneStore.updateScene(id: scene.id) {
+                    $0.generationOverrides = newValue
+                }
+            }
+        )
+    }
+
+    private var effectiveModelId: String {
+        sceneStore.scene(id: scene.id)?.modelId
+            ?? scene.modelId
+            ?? Preferences.defaultModelId
+            ?? Preferences.lastModelId
+            ?? ModelConfig.default.id
+    }
+
+    private var inheritedGenerationSettings: GenerationSettings {
+        Preferences.generationSettings(forModelId: effectiveModelId)
+    }
+
+    private var inheritedGenerationSource: String {
+        let modelName = ModelConfig.resolve(effectiveModelId)?.displayName ?? effectiveModelId
+        if Preferences.hasGenerationSettings(forModelId: effectiveModelId) {
+            return "saved \(modelName) defaults"
+        }
+        return "built-in \(modelName) defaults"
     }
 }

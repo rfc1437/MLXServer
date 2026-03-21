@@ -16,7 +16,8 @@ final class SceneStore {
                 name: scene.displayName,
                 modelId: scene.modelId,
                 systemPrompt: scene.systemPrompt,
-                starterPrompt: scene.starterPrompt
+                starterPrompt: scene.starterPrompt,
+                generationOverrides: scene.generationOverrides
             )
         } else {
             nextScene = .empty

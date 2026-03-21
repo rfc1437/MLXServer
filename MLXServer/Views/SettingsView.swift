@@ -8,7 +8,22 @@ struct SettingsView: View {
     @State private var apiAutoStart: Bool = Preferences.apiAutoStart
     @State private var idleUnloadMinutes: String = String(Preferences.idleUnloadMinutes)
     @State private var defaultModelId: String = Preferences.defaultModelId ?? ModelConfig.default.id
-    @State private var enableThinking: Bool = Preferences.enableThinking
+    @State private var generationDefaultsModelId: String = Preferences.defaultModelId ?? ModelConfig.default.id
+    @State private var kvQuantizationEnabled: Bool = Preferences.kvQuantizationEnabled
+    @State private var kvQuantizationBits: Int = Preferences.kvQuantizationBits
+
+    private var kvQuantizationConfig: TokenPrefixCache.QuantizationConfig {
+        guard kvQuantizationEnabled else {
+            return .default
+        }
+
+        return .init(
+            enabled: true,
+            bits: kvQuantizationBits,
+            groupSize: 64,
+            minTokens: 256
+        )
+    }
 
     var body: some View {
         Form {
@@ -27,13 +42,16 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Generation") {
-                Toggle("Enable thinking mode", isOn: $enableThinking)
-                    .onChange(of: enableThinking) {
-                        Preferences.enableThinking = enableThinking
+            Section("Generation Defaults") {
+                Picker("Defaults for model", selection: $generationDefaultsModelId) {
+                    ForEach(ModelConfig.availableModels) { model in
+                        Text(model.displayName).tag(model.id)
                     }
+                }
 
-                Text("When enabled, models like Qwen3.5 reason internally before responding. Produces better answers but slower. Takes effect on the next conversation.")
+                GenerationDefaultsEditor(settings: generationDefaultsBinding)
+
+                Text("These are the per-model defaults used by chat sessions and by the API server whenever a request omits a generation parameter. Lower temperature and stronger repetition penalties are usually better for technical work; higher temperature is usually better for improvisation and roleplay.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -107,8 +125,51 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Cache Quantization") {
+                Toggle("Enable KV cache quantization", isOn: $kvQuantizationEnabled)
+                    .onChange(of: kvQuantizationEnabled) {
+                        Preferences.kvQuantizationEnabled = kvQuantizationEnabled
+                        TokenPrefixCache.shared.setQuantizationConfig(kvQuantizationConfig)
+                    }
+
+                if kvQuantizationEnabled {
+                    HStack {
+                        Text("Bit width")
+                        Spacer()
+                        Stepper(
+                            value: $kvQuantizationBits,
+                            in: 4...16,
+                            step: 1
+                        ) {
+                            Text("\(kvQuantizationBits)-bit")
+                        }
+                        .onChange(of: kvQuantizationBits) {
+                            Preferences.kvQuantizationBits = kvQuantizationBits
+                            TokenPrefixCache.shared.setQuantizationConfig(kvQuantizationConfig)
+                        }
+                    }
+                }
+
+                if kvQuantizationEnabled {
+                    Text("Quantizes KV caches to \(kvQuantizationBits)-bit for \(kvQuantizationBits == 8 ? "~50%" : "~\((16 - kvQuantizationBits) * 6)%") memory savings. Lower bits = more compression but may impact response quality. 8-bit is recommended.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("When enabled, KV caches are quantized for compact storage, reducing memory usage on long conversations. Disabled by default for maximum quality.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 450, height: 550)
+        .frame(width: 450, height: 650)
+    }
+
+    private var generationDefaultsBinding: Binding<GenerationSettings> {
+        Binding(
+            get: { Preferences.generationSettings(forModelId: generationDefaultsModelId) },
+            set: { Preferences.setGenerationSettings($0, forModelId: generationDefaultsModelId) }
+        )
     }
 }
