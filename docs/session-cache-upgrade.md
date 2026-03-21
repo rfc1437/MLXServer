@@ -2599,8 +2599,8 @@ Validation note: `InferenceStats.swift` now samples `TokenPrefixCache` directly 
 
 ### Phase 7: Polish
 
-18. **Qwen3 EOS fix** — Verify first, implement if needed.
-19. **Native template tool formatting** — Switch from `.manualPrompt` to `.templateNative` once verified working.
+18. **Qwen3 EOS fix** — Deferred unless a real stop-token overrun is reproduced. Keep as a verification-only item; no current evidence in this repo shows that an app-side EOS override is needed.
+19. **Native template tool formatting** — Future experiment. See `docs/native-template-tool-formatting-plan.md` for the standalone implementation plan.
 
 ---
 
