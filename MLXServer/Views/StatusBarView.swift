@@ -108,7 +108,7 @@ struct StatusBarView: View {
 
     private func contextFillColor(for ratio: Double) -> Color {
         if ratio >= 0.9 { return .red }
-        if ratio >= 0.7 { return .orange }
+        if ratio >= 0.7 { return .yellow }
         return .blue
     }
 
