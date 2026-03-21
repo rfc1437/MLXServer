@@ -9,7 +9,6 @@ struct SettingsView: View {
     @State private var apiAutoStart: Bool = Preferences.apiAutoStart
     @State private var idleUnloadMinutes: String = String(Preferences.idleUnloadMinutes)
     @State private var defaultModelId: String = Preferences.defaultModelId ?? ModelConfig.default.id
-    @State private var generationDefaultsModelId: String = Preferences.defaultModelId ?? ModelConfig.default.id
     @State private var kvQuantizationEnabled: Bool = Preferences.kvQuantizationEnabled
     @State private var kvQuantizationBits: Int = Preferences.kvQuantizationBits
 
@@ -39,20 +38,6 @@ struct SettingsView: View {
                 }
 
                 Text("The model to load automatically when the app starts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Generation Defaults") {
-                Picker("Defaults for model", selection: $generationDefaultsModelId) {
-                    ForEach(modelManager.availableModels) { model in
-                        Text(model.displayName).tag(model.id)
-                    }
-                }
-
-                GenerationDefaultsEditor(settings: generationDefaultsBinding)
-
-                Text("These are the per-model defaults used by chat sessions and by the API server whenever a request omits a generation parameter. Lower temperature and stronger repetition penalties are usually better for technical work; higher temperature is usually better for improvisation and roleplay.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -170,16 +155,6 @@ struct SettingsView: View {
             if !modelManager.availableModels.contains(where: { $0.id == defaultModelId }) {
                 defaultModelId = modelManager.availableModels.first?.id ?? ModelConfig.default.id
             }
-            if !modelManager.availableModels.contains(where: { $0.id == generationDefaultsModelId }) {
-                generationDefaultsModelId = defaultModelId
-            }
         }
-    }
-
-    private var generationDefaultsBinding: Binding<GenerationSettings> {
-        Binding(
-            get: { Preferences.generationSettings(forModelId: generationDefaultsModelId) },
-            set: { Preferences.setGenerationSettings($0, forModelId: generationDefaultsModelId) }
-        )
     }
 }

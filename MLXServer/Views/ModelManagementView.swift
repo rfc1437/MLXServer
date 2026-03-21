@@ -84,11 +84,15 @@ struct ModelManagementView: View {
                 baselineModel: modelManager.baselineModel(repoId: model.repoId) ?? model,
                 detectedLocalModel: modelManager.discoveredLocalModelInfo(repoId: model.repoId),
                 hasSavedOverride: Preferences.hasModelMetadataOverride(forRepoId: model.repoId),
+                hasSavedGenerationDefaults: Preferences.hasGenerationSettings(forModelId: model.id),
                 onSave: { override in
                     modelManager.saveMetadataOverride(override, for: model)
                 },
                 onReset: {
                     modelManager.clearMetadataOverride(for: model)
+                },
+                onSaveGenerationSettings: { settings in
+                    Preferences.setGenerationSettings(settings, forModelId: model.id)
                 }
             )
         }
@@ -241,32 +245,40 @@ private struct ModelMetadataEditorView: View {
     let baselineModel: ModelConfig
     let detectedLocalModel: LocalModelResolver.LocalModelInfo?
     let hasSavedOverride: Bool
+    let hasSavedGenerationDefaults: Bool
     let onSave: (ModelMetadataOverride) -> Void
     let onReset: () -> Void
+    let onSaveGenerationSettings: (GenerationSettings) -> Void
 
     @State private var contextLengthText: String
     @State private var primaryLoaderKind: ModelConfig.LoaderKind
     @State private var supportsImages: Bool
     @State private var supportsTools: Bool
+    @State private var generationSettings: GenerationSettings
 
     init(
         model: ModelConfig,
         baselineModel: ModelConfig,
         detectedLocalModel: LocalModelResolver.LocalModelInfo?,
         hasSavedOverride: Bool,
+        hasSavedGenerationDefaults: Bool,
         onSave: @escaping (ModelMetadataOverride) -> Void,
-        onReset: @escaping () -> Void
+        onReset: @escaping () -> Void,
+        onSaveGenerationSettings: @escaping (GenerationSettings) -> Void
     ) {
         self.model = model
         self.baselineModel = baselineModel
         self.detectedLocalModel = detectedLocalModel
         self.hasSavedOverride = hasSavedOverride
+        self.hasSavedGenerationDefaults = hasSavedGenerationDefaults
         self.onSave = onSave
         self.onReset = onReset
+        self.onSaveGenerationSettings = onSaveGenerationSettings
         _contextLengthText = State(initialValue: String(model.contextLength))
         _primaryLoaderKind = State(initialValue: model.primaryLoaderKind)
         _supportsImages = State(initialValue: model.supportsImages)
         _supportsTools = State(initialValue: model.supportsTools)
+        _generationSettings = State(initialValue: Preferences.generationSettings(forModelId: model.id))
     }
 
     var body: some View {
@@ -337,10 +349,18 @@ private struct ModelMetadataEditorView: View {
                         }
                     }
                 }
+
+                Section("Generation Defaults") {
+                    GenerationDefaultsEditor(settings: $generationSettings)
+
+                    Text(generationDefaultsSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
             .navigationTitle(model.displayName)
-            .frame(minWidth: 520, minHeight: 380)
+            .frame(minWidth: 560, minHeight: 620)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -352,6 +372,7 @@ private struct ModelMetadataEditorView: View {
                     Button("Save") {
                         guard let currentOverride else { return }
                         onSave(currentOverride)
+                        onSaveGenerationSettings(generationSettings.normalized())
                         dismiss()
                     }
                     .disabled(currentOverride == nil)
@@ -427,5 +448,17 @@ private struct ModelMetadataEditorView: View {
 
     private func yesNo(_ value: Bool) -> String {
         value ? "Yes" : "No"
+    }
+
+    private var generationDefaultsSummary: String {
+        if hasSavedGenerationDefaults {
+            return "These saved generation defaults apply to new chats and to API requests that omit generation parameters for this model."
+        }
+
+        if model.isCurated {
+            return "These defaults currently match the model's built-in defaults. Save to store a custom per-model default for chats and API requests."
+        }
+
+        return "These defaults currently match the general fallback defaults for this model. Save to store a custom per-model default for chats and API requests."
     }
 }
