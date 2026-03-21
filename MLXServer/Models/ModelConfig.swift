@@ -69,6 +69,16 @@ struct ModelConfig: Identifiable, Hashable {
             supportsTools: false,
             defaultGenerationSettings: .roleplayDefault
         ),
+        ModelConfig(
+            id: "violet-lotus",
+            repoId: "hobaratio/MN-Violet-Lotus-12B-mlx-4Bit",
+            displayName: "Violet Lotus 12B",
+            contextLength: 32_768,
+            loaderKind: .llm,
+            supportsImages: false,
+            supportsTools: false,
+            defaultGenerationSettings: .roleplayDefault
+        ),
     ]
 
     static let `default` = availableModels[0]

@@ -11,6 +11,7 @@ Native macOS app for running local LLMs on Apple Silicon via [MLX](https://githu
 | `qwen3.5-0.8b` | `mlx-community/Qwen3.5-0.8B-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
 | `qwen3.5-9b` | `mlx-community/Qwen3.5-9B-4bit` | 256k | `VLMModelFactory` | Vision, thinking mode, tool use (`<tool_call>` tags) |
 | `stheno` | `synk/L3-8B-Stheno-v3.2-MLX` | 8k | `LLMModelFactory` | Text-only, llama-based |
+| `violet-lotus` | `hobaratio/MN-Violet-Lotus-12B-mlx-4Bit` | 32k | `LLMModelFactory` | Text-only, Mistral-based |
 
 Any model in MLX format on HuggingFace can be added — there is no restriction on uploader or architecture.
 
