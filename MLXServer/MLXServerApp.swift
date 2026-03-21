@@ -46,15 +46,6 @@ struct MLXServerApp: App {
                 .environment(documentController)
                 .environment(modelManager)
                 .environment(sceneStore)
-                .task {
-                    guard !documentController.hasPendingOpenRequests else { return }
-                    guard !ChatViewModel.hasAutosavedSession else { return }
-                    // Auto-load: configured default → last used → built-in default
-                    let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
-                    if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {
-                        await modelManager.loadModel(config)
-                    }
-                }
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 700)

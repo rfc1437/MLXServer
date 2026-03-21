@@ -14,6 +14,8 @@ struct ContentView: View {
     @State private var exportDocument: ChatExportDocument?
     @State private var documentErrorMessage: String?
     @State private var exportErrorMessage: String?
+    @State private var startupTask: Task<Void, Never>?
+    @State private var isOpeningDocument = false
 
     private var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -37,14 +39,9 @@ struct ContentView: View {
                     if Preferences.apiAutoStart && !isRunningTests {
                         vm.startAPIServer()
                     }
-                    // Restore autosaved session if no document is being opened
-                    if !documentController.hasPendingOpenRequests && !isRunningTests {
-                        Task {
-                            await vm.restoreFromAutosave()
-                        }
-                    }
                 }
 
+                scheduleStartupWork()
                 processPendingOpenRequests()
             }
             .onChange(of: modelManager.currentModel) {
@@ -62,6 +59,7 @@ struct ContentView: View {
                 showLoadError = modelManager.errorMessage != nil
             }
             .onChange(of: documentController.openRequestNonce) {
+                startupTask?.cancel()
                 processPendingOpenRequests()
             }
     }
@@ -376,7 +374,54 @@ struct ContentView: View {
 
         Task {
             while let url = documentController.consumeNextOpenRequest() {
+                startupTask?.cancel()
                 await openDocument(at: url)
+            }
+        }
+    }
+
+    private func scheduleStartupWork() {
+        guard let chatVM else { return }
+
+        startupTask?.cancel()
+        startupTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+
+            if documentController.hasPendingOpenRequests {
+                await MainActor.run {
+                    processPendingOpenRequests()
+                }
+                return
+            }
+
+            guard !isOpeningDocument else { return }
+
+            if !isRunningTests, ChatViewModel.hasAutosavedSession {
+                let restored = await chatVM.restoreFromAutosave()
+                guard !Task.isCancelled else { return }
+                guard !isOpeningDocument else { return }
+                if restored || documentController.hasPendingOpenRequests {
+                    await MainActor.run {
+                        processPendingOpenRequests()
+                    }
+                    return
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard !isOpeningDocument else { return }
+            guard !documentController.hasPendingOpenRequests else {
+                await MainActor.run {
+                    processPendingOpenRequests()
+                }
+                return
+            }
+            guard modelManager.currentModel == nil else { return }
+
+            let modelId = Preferences.defaultModelId ?? Preferences.lastModelId ?? ModelConfig.default.id
+            if let config = ModelConfig.availableModels.first(where: { $0.id == modelId }) {
+                await modelManager.loadModel(config)
             }
         }
     }
@@ -389,6 +434,10 @@ struct ContentView: View {
             )
             guard shouldContinue else { return }
         }
+
+        startupTask?.cancel()
+        isOpeningDocument = true
+        defer { isOpeningDocument = false }
 
         do {
             try await chatVM?.loadDocument(from: url)
